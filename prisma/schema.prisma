@@ -1,0 +1,427 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// SQLite no tiene enums nativos: los estados y tipos se guardan como texto y se validan en la
+// app (ver src/lib/constants.ts). Al pasar a PostgreSQL se pueden convertir en enums.
+//
+// Las REGLAS de turnos son datos (tablas CoverageRule, RuleWindow, RuleQuota, RuleRequirement),
+// nunca condiciones escritas en el código.
+//
+// Fechas y horas:
+//  - Los instantes (inicio/fin de un turno) se guardan en UTC.
+//  - Las fechas "de calendario" (feriados, licencias, localDate) son texto YYYY-MM-DD en la zona
+//    horaria del centro.
+//  - Las horas dentro de un día se guardan como minutos desde las 00:00 (9:30 = 570).
+//  - Días de la semana: 0 = domingo ... 6 = sábado.
+
+/// Configuración única del centro (siempre existe una sola fila, id = 1).
+model CenterSettings {
+  id                  Int      @id @default(1)
+  name                String   @default("Salus")
+  timezone            String   @default("America/Argentina/Buenos_Aires")
+  /// Cuántos días hacia adelante puede reservar un paciente.
+  bookingHorizonDays  Int      @default(60)
+  /// Anticipación mínima (horas) para reservar online.
+  minNoticeHours      Int      @default(2)
+  /// Hasta cuántas horas antes de turno el paciente puede cancelar por su cuenta.
+  cancelLimitHours    Int      @default(12)
+  /// Cuántas horas antes se envía el recordatorio por mail.
+  reminderHoursBefore Int      @default(24)
+  updatedAt           DateTime @updatedAt
+}
+
+// ─────────────────────────── Usuarios y accesos ───────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  /// ADMIN | SECRETARY | PROFESSIONAL
+  role         String
+  /// Si es true gestiona la agenda de todos los profesionales (ej. una secretaria central).
+  /// Si es false, solo la de los profesionales que tenga asignados en UserProfessionalAccess.
+  manageAll    Boolean  @default(false)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  /// Si el usuario es un profesional, su ficha.
+  professional Professional?
+  access       UserProfessionalAccess[]
+
+  createdAppointments   Appointment[]       @relation("AppointmentCreatedBy")
+  cancelledAppointments Appointment[]       @relation("AppointmentCancelledBy")
+  createdExceptions     ScheduleException[]
+  createdAllowances     OverbookAllowance[]
+  auditLogs             AuditLog[]
+}
+
+/// Qué profesionales puede gestionar una secretaria. Permite una secretaria por profesional,
+/// una para varios, o una para todo el centro, sin tocar código.
+model UserProfessionalAccess {
+  userId         String
+  professionalId String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  professional   Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+
+  @@id([userId, professionalId])
+}
+
+// ─────────────────────────── Catálogos ───────────────────────────
+
+model Specialty {
+  id     String  @id @default(cuid())
+  name   String  @unique
+  active Boolean @default(true)
+  /// Rango de edad permitido (en años cumplidos, ambos inclusive). Null = sin límite.
+  /// Ej. Pediatría: minAgeYears 0, maxAgeYears 17.
+  minAgeYears Int?
+  maxAgeYears Int?
+
+  professionals Professional[]
+  rules         CoverageRule[]
+  waitlist      WaitlistEntry[]
+}
+
+model Office {
+  id     String  @id @default(cuid())
+  name   String  @unique
+  active Boolean @default(true)
+
+  blocks       AgendaBlock[]
+  appointments Appointment[]
+}
+
+/// Obra social, prepaga o "Particular".
+model Coverage {
+  id           String  @id @default(cuid())
+  name         String  @unique
+  /// true para la cobertura "Particular": es la que se ofrece como alternativa si no hay turnos.
+  isParticular Boolean @default(false)
+  active       Boolean @default(true)
+  sortOrder    Int     @default(0)
+  /// Color con el que se identifica la cobertura en la agenda de la secretaria.
+  color        String  @default("#0d9488")
+
+  rules        CoverageRule[]
+  patients     Patient[]
+  appointments Appointment[]
+  waitlist     WaitlistEntry[]
+}
+
+model Professional {
+  id            String  @id @default(cuid())
+  name          String
+  /// Matrícula profesional.
+  licenseNumber String?
+  active        Boolean @default(true)
+  /// Si es false no aparece en el turnero público (solo la secretaria le da turnos).
+  onlineBooking Boolean @default(true)
+  createdAt     DateTime @default(now())
+
+  specialtyId String
+  specialty   Specialty @relation(fields: [specialtyId], references: [id], onDelete: Restrict)
+
+  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  access       UserProfessionalAccess[]
+  blocks       AgendaBlock[]
+  rules        CoverageRule[]
+  exceptions   ScheduleException[]
+  allowances   OverbookAllowance[]
+  appointments Appointment[]
+  waitlist     WaitlistEntry[]
+
+  @@index([specialtyId])
+}
+
+// ─────────────────────────── Capa 1: agenda base ───────────────────────────
+
+/// Cuándo atiende un profesional: bloque semanal con consultorio y duración del turno.
+model AgendaBlock {
+  id             String  @id @default(cuid())
+  weekday        Int
+  startMinutes   Int
+  endMinutes     Int
+  /// Duración base de cada turno dentro del bloque (define la grilla de horarios).
+  slotMinutes    Int
+  active         Boolean @default(true)
+  /// Vigencia opcional (YYYY-MM-DD) para cambios temporales de agenda.
+  validFrom      String?
+  validTo        String?
+
+  professionalId String
+  professional   Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  officeId       String?
+  office         Office?      @relation(fields: [officeId], references: [id], onDelete: SetNull)
+
+  @@index([professionalId, weekday])
+}
+
+// ─────────────────────────── Capa 2: reglas por cobertura ───────────────────────────
+
+/// A quién atiende un profesional (o toda una especialidad) y bajo qué condiciones.
+/// Sin regla para una cobertura = ese profesional no atiende esa cobertura.
+/// Una regla de profesional pisa a la de especialidad para la misma cobertura.
+/// Exactamente uno de professionalId / specialtyId debe estar cargado (se valida en la app).
+model CoverageRule {
+  id         String  @id @default(cuid())
+  active     Boolean @default(true)
+  notes      String?
+
+  coverageId String
+  coverage   Coverage @relation(fields: [coverageId], references: [id], onDelete: Cascade)
+
+  professionalId String?
+  professional   Professional? @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  specialtyId    String?
+  specialty      Specialty?    @relation(fields: [specialtyId], references: [id], onDelete: Cascade)
+
+  /// Duración especial (en minutos) para primera vez / control. Null = usa la del bloque.
+  firstVisitMinutes Int?
+  controlMinutes    Int?
+
+  windows      RuleWindow[]
+  quotas       RuleQuota[]
+  requirements RuleRequirement[]
+
+  @@index([coverageId])
+  @@index([professionalId])
+  @@index([specialtyId])
+}
+
+/// Ventana horaria permitida para la cobertura (un registro por día de la semana).
+model RuleWindow {
+  id           String @id @default(cuid())
+  weekday      Int
+  startMinutes Int
+  endMinutes   Int
+
+  ruleId String
+  rule   CoverageRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([ruleId])
+}
+
+/// Límite de turnos. Una regla puede tener varios a la vez (ej. 2 por día Y 6 por semana).
+model RuleQuota {
+  id     String @id @default(cuid())
+  /// DAY | WEEK | MONTH (semana y mes de calendario; la semana va de lunes a domingo).
+  period String
+  max    Int
+  /// Quién comparte el cupo: PROFESSIONAL (cada profesional el suyo) | SPECIALTY | CENTER.
+  scope  String @default("PROFESSIONAL")
+  /// Días de la semana en que rige el límite, separados por coma (ej. "2,4"). Null = todos.
+  /// Permite que el centro dé cupos solo en los días que quiera.
+  weekdays String?
+
+  ruleId String
+  rule   CoverageRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([ruleId])
+}
+
+/// Requisito que el paciente debe cumplir ("Orden PAMI vigente", "DNI y credencial", …).
+model RuleRequirement {
+  id        String @id @default(cuid())
+  text      String
+  sortOrder Int    @default(0)
+
+  ruleId String
+  rule   CoverageRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([ruleId])
+}
+
+// ─────────────────────────── Capa 3: excepciones ───────────────────────────
+
+/// Días u horarios sin atención: feriados, licencias y bloqueos puntuales.
+model ScheduleException {
+  id    String @id @default(cuid())
+  /// HOLIDAY | LEAVE | BLOCK
+  kind  String
+  /// Null = aplica a todo el centro (feriado).
+  professionalId String?
+  professional   Professional? @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+
+  dateFrom     String
+  dateTo       String
+  /// Null = todo el día. Si están cargados, solo se bloquea esa franja.
+  startMinutes Int?
+  endMinutes   Int?
+  note         String?
+
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  @@index([professionalId, dateFrom])
+}
+
+/// Sobreturnos habilitados: cuántos turnos extra puede dar la secretaria un día puntual.
+model OverbookAllowance {
+  id       String @id @default(cuid())
+  date     String
+  maxExtra Int
+  note     String?
+
+  professionalId String
+  professional   Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  createdById    String?
+  createdBy      User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime     @default(now())
+
+  @@unique([professionalId, date])
+}
+
+// ─────────────────────────── Pacientes y turnos ───────────────────────────
+
+model Patient {
+  id          String   @id @default(cuid())
+  dni         String   @unique
+  firstName   String
+  lastName    String
+  /// YYYY-MM-DD. Se usa para validar el rango de edad de la especialidad.
+  birthDate   String
+  email       String?
+  phone       String
+  affiliateNumber String?
+  createdAt   DateTime @default(now())
+
+  coverageId String?
+  coverage   Coverage? @relation(fields: [coverageId], references: [id], onDelete: SetNull)
+
+  appointments Appointment[]
+  waitlist     WaitlistEntry[]
+
+  @@index([lastName, firstName])
+}
+
+/// Capa 4. Un turno cancelado libera el cupo; ausente, atendido, reservado y confirmado lo consumen.
+model Appointment {
+  id       String   @id @default(cuid())
+  /// Instantes en UTC.
+  startsAt DateTime
+  endsAt   DateTime
+  /// Fecha local del centro (YYYY-MM-DD). Se guarda para contar cupos por día, semana y mes.
+  localDate String
+  /// RESERVED | CONFIRMED | CANCELLED | NO_SHOW | ATTENDED
+  status   String   @default("RESERVED")
+  /// FIRST (primera vez) | CONTROL
+  visitType String  @default("CONTROL")
+  /// PUBLIC (el paciente) | STAFF (secretaria)
+  source   String   @default("PUBLIC")
+
+  /// Número de afiliado con el que se sacó este turno.
+  affiliateNumber String?
+  notes           String?
+
+  /// Sobreturno o salto de regla hecho por personal: motivo y reglas salteadas quedan registrados.
+  isOverride     Boolean @default(false)
+  overrideReason String?
+  overrideRules  String?
+
+  /// Token secreto para que el paciente cancele sin cuenta. UUID v4 (aleatorio): un cuid contiene la
+  /// hora y un contador, así que es más fácil de adivinar de lo que conviene para un link secreto.
+  manageToken String   @unique @default(uuid())
+  createdAt   DateTime @default(now())
+
+  cancelledAt  DateTime?
+  cancelReason String?
+
+  professionalId String
+  professional   Professional @relation(fields: [professionalId], references: [id], onDelete: Restrict)
+  patientId      String
+  patient        Patient      @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  /// Cobertura con la que se sacó el turno (puede diferir de la habitual del paciente).
+  coverageId     String
+  coverage       Coverage     @relation(fields: [coverageId], references: [id], onDelete: Restrict)
+  officeId       String?
+  office         Office?      @relation(fields: [officeId], references: [id], onDelete: SetNull)
+
+  createdById   String?
+  createdBy     User?   @relation("AppointmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  cancelledById String?
+  cancelledBy   User?   @relation("AppointmentCancelledBy", fields: [cancelledById], references: [id], onDelete: SetNull)
+
+  notifications NotificationLog[]
+
+  @@index([professionalId, startsAt])
+  @@index([coverageId, localDate])
+  @@index([patientId])
+  @@index([localDate])
+}
+
+/// Pacientes esperando que se libere un turno.
+model WaitlistEntry {
+  id         String   @id @default(cuid())
+  /// WAITING | NOTIFIED | BOOKED | CANCELLED
+  status     String   @default("WAITING")
+  notes      String?
+  notifiedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  patientId  String
+  patient    Patient   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  coverageId String
+  coverage   Coverage  @relation(fields: [coverageId], references: [id], onDelete: Restrict)
+  specialtyId String
+  specialty   Specialty @relation(fields: [specialtyId], references: [id], onDelete: Restrict)
+  /// Null = cualquier profesional de la especialidad.
+  professionalId String?
+  professional   Professional? @relation(fields: [professionalId], references: [id], onDelete: SetNull)
+
+  notifications NotificationLog[]
+
+  @@index([status, specialtyId])
+}
+
+// ─────────────────────────── Avisos y auditoría ───────────────────────────
+
+/// Cada mail a enviar o enviado (confirmaciones, recordatorios con Resend, avisos de lista de espera).
+model NotificationLog {
+  id          String    @id @default(cuid())
+  /// CONFIRMATION | REMINDER | CANCELLATION | WAITLIST
+  kind        String
+  channel     String    @default("EMAIL")
+  toAddress   String
+  /// PENDING | SENT | FAILED
+  status      String    @default("PENDING")
+  scheduledFor DateTime
+  sentAt      DateTime?
+  providerMessageId String?
+  error       String?
+  createdAt   DateTime  @default(now())
+
+  appointmentId String?
+  appointment   Appointment?   @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  waitlistEntryId String?
+  waitlistEntry   WaitlistEntry? @relation(fields: [waitlistEntryId], references: [id], onDelete: Cascade)
+
+  @@index([status, scheduledFor])
+}
+
+/// Registro de quién hizo qué (turnos creados o cancelados por personal, overrides, cambios de reglas).
+/// Es de solo agregado: la aplicación nunca lo edita ni lo borra.
+model AuditLog {
+  id        String   @id @default(cuid())
+  action    String
+  entity    String
+  entityId  String?
+  /// Detalle en JSON (texto).
+  details   String?
+  createdAt DateTime @default(now())
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+}
