@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "vercel-build": "prisma generate && prisma migrate deploy && next build",
+    "vercel-build": "prisma generate && prisma migrate deploy && (if [ -n \"$SEED_ADMIN_EMAIL\" ]; then tsx prisma/seed.ts; fi) && next build",
     "postinstall": "prisma generate",
     "start": "next start",
     "lint": "eslint",
