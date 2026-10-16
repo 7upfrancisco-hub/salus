@@ -48,7 +48,8 @@ Usuarios de ejemplo (solo desarrollo): `admin@salus.local`, `secretaria@salus.lo
 
 - Primer commit hecho el 2026-10-16 en la rama `main`.
 - 2026-10-16: migración a PostgreSQL para poder deployar en Vercel (SQLite no sirve en serverless). Migración `init` nueva (las de SQLite se descartaron), índice parcial anti doble reserva portado, y `bookAppointment` toma un `pg_advisory_xact_lock` para serializar las reservas (cupos y superposiciones ya no dependen de SQLite). Verificado contra un Postgres local temporal: `tsc`, `eslint`, `npm test` (57), `check:reservas` (36) y `check:ui` (65) en verde con el build de producción. Se corrigió además un bug de `check-reservas` que dependía del día de la semana en que se corría.
-- Deploy elegido: Vercel + Neon, con datos de demo (para mostrarlo). Script `vercel-build` aplica migraciones. Ver "Deploy" en el README.
+- **Deployado el 2026-10-16**: https://salus-green.vercel.app (Vercel + Neon, con datos de demo). Repo: github.com/7upfrancisco-hub/salus (público); cada push a `main` redeploya solo. `vercel-build` aplica migraciones y, si hay `SEED_ADMIN_EMAIL` en Vercel, corre el seed (idempotente; `SEED_DEMO=1` carga la demo). Variables en Vercel: las de Neon, `SESSION_SECRET`, `CRON_SECRET`, `APP_URL`, `SEED_*`. La cadena de conexión de Neon no se puede leer por API (la integración la entrega cifrada): para correr algo contra producción hay que sacarla del panel de Vercel/Neon.
+- Mails y cron: sin `RESEND_API_KEY` no se envía nada, y en Vercel nadie llama a `/api/cron/notificaciones` (falta un cron programado) → los recordatorios no salen.
 - Aviso de `pg` en las pruebas ("client.query() while already executing"): viene de consultas en paralelo dentro de una transacción (`Promise.all` con el cliente `tx`); hoy anda, pero dejaría de andar con `pg@9`.
 - 2026-10-13: revisión completa para presentar el proyecto. Todo verde: `tsc`, `eslint`, `npm test` (57), `check:reservas` (con pruebas nuevas), `check:ui` (65 verificaciones, estable en 3 corridas seguidas) y `npm run build` de producción.
 - Se verificó que cada página y acción de servidor exige sesión/rol (admin, `requireConfigUser`, `requireStaff`) y que 6 pedidos simultáneos por el mismo horario guardan un solo turno.
@@ -65,7 +66,8 @@ Usuarios de ejemplo (solo desarrollo): `admin@salus.local`, `secretaria@salus.lo
 
 ## Pendientes / próximos pasos
 
-- Terminar el deploy en Vercel + Neon (falta cuenta/login del usuario y cargar el seed de demo en la base de producción).
+- Revocar el token de Vercel que se usó para el deploy (se pegó en el chat).
+- Programar el cron de mails (Vercel Cron) y cargar `RESEND_API_KEY` si se quiere que salgan avisos.
 - Antes de salir a producción real:
   - El límite de pedidos vive en memoria y confía en `x-forwarded-for`: detrás de un proxy hay que fijar cuál IP es confiable y, con varias instancias (Vercel ya lo es), usar Redis/Upstash. En Vercel el límite del login se vuelve casi inútil hasta hacer esto.
   - La demo deployada tiene usuarios con contraseñas públicas (README): no usar con datos reales.
