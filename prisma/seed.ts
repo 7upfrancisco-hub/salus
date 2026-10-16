@@ -1,12 +1,11 @@
-import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
+import { PrismaPg } from "@prisma/adapter-pg";
 import bcrypt from "bcryptjs";
 import { PrismaClient } from "../src/generated/prisma/client";
 
-const db = new PrismaClient({
-  adapter: new PrismaBetterSqlite3({
-    url: process.env.DATABASE_URL ?? "file:./dev.db",
-  }),
-});
+const connectionString = process.env.DIRECT_URL ?? process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL;
+if (!connectionString) throw new Error("Falta DATABASE_URL (cadena de conexión a PostgreSQL).");
+
+const db = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
 
 const hm = (h: number, m = 0) => h * 60 + m;
 const MON = 1, TUE = 2, WED = 3, THU = 4, FRI = 5;

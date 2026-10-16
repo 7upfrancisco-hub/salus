@@ -4,11 +4,11 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
 }
 
-// SQLite no tiene enums nativos: los estados y tipos se guardan como texto y se validan en la
-// app (ver src/lib/constants.ts). Al pasar a PostgreSQL se pueden convertir en enums.
+// Los estados y tipos se guardan como texto y se validan en la app (ver src/lib/constants.ts),
+// no como enums de la base: así agregar un estado no exige una migración.
 //
 // Las REGLAS de turnos son datos (tablas CoverageRule, RuleWindow, RuleQuota, RuleRequirement),
 // nunca condiciones escritas en el código.

@@ -173,11 +173,13 @@ try {
   console.log("\nVarios pacientes a la vez");
   {
     // Seis pedidos simultáneos por el mismo horario: tiene que entrar uno solo.
-    const context = (await loadEngineContext({ professionalId: perez.id, from: MON, to: WED }))!;
+    // Según el día en que se corra la prueba, el lunes puede caer después del miércoles.
+    const [rangeFrom, rangeTo] = MON < WED ? [MON, WED] : [WED, MON];
+    const context = (await loadEngineContext({ professionalId: perez.id, from: rangeFrom, to: rangeTo }))!;
     const freeDay = turnosDisponibles(context.inputFor({ coverageId: osde.id, visitType: "FIRST", audience: "patient" })).days[0];
     const free = freeDay?.slots[0];
     if (!freeDay || !free) {
-      check("hay un horario libre para probar la concurrencia", false, `sin horarios libres entre ${MON} y ${WED}`);
+      check("hay un horario libre para probar la concurrencia", false, `sin horarios libres entre ${rangeFrom} y ${rangeTo}`);
     } else {
       const results = await Promise.all(
         Array.from({ length: 6 }, () => book({ coverageId: osde.id, date: freeDay.date, startMinutes: free.startMinutes })),

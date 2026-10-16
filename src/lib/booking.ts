@@ -57,6 +57,9 @@ class Abort extends Error {
 const fail = (code: BookErrorCode, message: string, violations?: SlotStatus[]) =>
   new Abort({ ok: false, code, message, violations });
 
+/** Clave del candado de PostgreSQL que serializa las reservas (cualquier entero fijo sirve). */
+const BOOKING_LOCK_KEY = 727_001;
+
 const isUniqueViolation = (error: unknown) =>
   typeof error === "object" &&
   error !== null &&
@@ -78,6 +81,11 @@ export async function bookAppointment(input: BookInput): Promise<BookResult> {
 
   try {
     return await db.$transaction(async (tx) => {
+      // Las reservas se validan leyendo cupos y horarios ocupados y después escribiendo. Para que dos
+      // pedidos simultáneos no pasen la validación a la vez, se hacen de a uno: el candado se
+      // libera solo al terminar la transacción. En un centro de salud el volumen lo permite de sobra.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${BOOKING_LOCK_KEY})`;
+
       const now = new Date();
       const context = await loadEngineContext({
         professionalId,
@@ -198,7 +206,7 @@ export async function bookAppointment(input: BookInput): Promise<BookResult> {
         ok: true as const,
         appointment: { id: appointment.id, manageToken: appointment.manageToken, startsAt: appointment.startsAt, visitType: visitType as VisitType },
       };
-    });
+    }, { maxWait: 15_000, timeout: 20_000 });
   } catch (error) {
     if (error instanceof Abort) return error.result;
     if (isUniqueViolation(error)) {

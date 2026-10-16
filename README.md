@@ -5,9 +5,12 @@ horarias, cupos, requisitos) son **datos editables desde la interfaz**, no códi
 
 ## Cómo correrlo
 
+Necesita una base **PostgreSQL** (por ejemplo una gratuita de [Neon](https://neon.tech)). Copiá su cadena de
+conexión en `.env.local` como `DATABASE_URL=postgresql://...` junto con `SESSION_SECRET` y los `SEED_*`.
+
 ```bash
 npm install
-npm run db:migrate        # crea/actualiza la base (SQLite: dev.db)
+npm run db:migrate        # crea/actualiza las tablas
 npm run db:seed           # administrador + datos de ejemplo (solo desarrollo)
 npm run dev -- -p 3001    # http://localhost:3001
 ```
@@ -47,7 +50,8 @@ Usuarios de ejemplo (solo desarrollo, salen del seed): `admin@salus.local` / `ad
 | Variable | Para qué |
 |---|---|
 | `SESSION_SECRET` | Firma las sesiones (obligatoria; larga y secreta) |
-| `DATABASE_URL` | Base de datos (por defecto `file:./dev.db`) |
+| `DATABASE_URL` | Cadena de conexión a PostgreSQL (obligatoria; en Neon, la «pooled») |
+| `DIRECT_URL` | Conexión directa, solo para migraciones. Opcional: también se acepta `DATABASE_URL_UNPOOLED` (la inyecta Neon) |
 | `APP_URL` | Dirección pública, para los links de los mails |
 | `RESEND_API_KEY`, `MAIL_FROM` | Envío de mails con Resend (sin ellas no se envía ninguno) |
 | `CRON_SECRET` | Protege `POST /api/cron/notificaciones`, que envía los mails pendientes |
@@ -58,8 +62,8 @@ envían cuando un programador de tareas llama cada pocos minutos a `/api/cron/no
 
 ## Antes de publicarlo (pendiente)
 
-- [ ] Pasar de SQLite a **PostgreSQL** (cambiar el proveedor y el adaptador de Prisma, y volver a crear el índice
-      parcial anti doble reserva que está en la migración `init`).
+- [x] PostgreSQL (hecho): el índice anti doble reserva está en la migración `init` y `bookAppointment` serializa
+      las reservas con un candado de la base (`pg_advisory_xact_lock`).
 - [ ] No cargar los datos de ejemplo (`SEED_DEMO`) ni las contraseñas del seed; crear un administrador real.
 - [ ] HTTPS, `SESSION_SECRET` y `CRON_SECRET` propios, cuenta y dominio verificado en Resend.
 - [ ] El límite de pedidos de los formularios públicos (`src/lib/rate-limit.ts`) vive en memoria: con más de un
@@ -67,3 +71,14 @@ envían cuando un programador de tareas llama cada pocos minutos a `/api/cron/no
 - [ ] Copias de seguridad de la base.
 - [ ] Datos de salud: revisar con el centro las obligaciones de la Ley 25.326 de protección de datos personales
       (consentimiento, registro de la base, política de privacidad).
+
+## Deploy (Vercel + Neon)
+
+1. Subir el repo a GitHub e importarlo en Vercel (framework: Next.js; el script `vercel-build` genera el cliente
+   de Prisma y aplica las migraciones solo).
+2. En Vercel → *Storage* → crear una base **Neon** y conectarla al proyecto: inyecta `DATABASE_URL` y
+   `DATABASE_URL_UNPOOLED`.
+3. Variables del proyecto: `SESSION_SECRET` (≥ 32 caracteres, propio), `CRON_SECRET`, `APP_URL` (la URL pública) y,
+   si se quieren mails, `RESEND_API_KEY` y `MAIL_FROM`.
+4. Primera carga de datos (una sola vez, desde esta PC con las variables de la base de producción):
+   `SEED_ADMIN_EMAIL=… SEED_ADMIN_PASSWORD=… SEED_DEMO=1 npm run db:seed` — `SEED_DEMO=1` solo para una demo.
