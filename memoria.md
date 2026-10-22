@@ -49,7 +49,13 @@ Usuarios de ejemplo (solo desarrollo): `admin@salus.local`, `secretaria@salus.lo
 - Primer commit hecho el 2026-10-16 en la rama `main`.
 - 2026-10-16: migración a PostgreSQL para poder deployar en Vercel (SQLite no sirve en serverless). Migración `init` nueva (las de SQLite se descartaron), índice parcial anti doble reserva portado, y `bookAppointment` toma un `pg_advisory_xact_lock` para serializar las reservas (cupos y superposiciones ya no dependen de SQLite). Verificado contra un Postgres local temporal: `tsc`, `eslint`, `npm test` (57), `check:reservas` (36) y `check:ui` (65) en verde con el build de producción. Se corrigió además un bug de `check-reservas` que dependía del día de la semana en que se corría.
 - **Deployado el 2026-10-16**: https://salus-green.vercel.app (Vercel + Neon, con datos de demo). Repo: github.com/7upfrancisco-hub/salus (público); cada push a `main` redeploya solo. `vercel-build` aplica migraciones y, si hay `SEED_ADMIN_EMAIL` en Vercel, corre el seed (idempotente; `SEED_DEMO=1` carga la demo). Variables en Vercel: las de Neon, `SESSION_SECRET`, `CRON_SECRET`, `APP_URL`, `SEED_*`. La cadena de conexión de Neon no se puede leer por API (la integración la entrega cifrada): para correr algo contra producción hay que sacarla del panel de Vercel/Neon.
-- Mails y cron: sin `RESEND_API_KEY` no se envía nada, y en Vercel nadie llama a `/api/cron/notificaciones` (falta un cron programado) → los recordatorios no salen.
+- **2026-10-22 — tanda "listo para producción" (sin commitear aún):**
+  - Rate limit y freno de login pasados a la base (tabla `RateLimitHit`, migración `20261022000000_rate_limit`); una sola sentencia SQL por chequeo, se purga solo (2 % de las llamadas, registros de más de 24 h). `recordFailure` ya no recibe la ventana. `clientIp()` usa `x-vercel-forwarded-for` en Vercel y la ÚLTIMA IP de `x-forwarded-for` fuera de Vercel (la primera la escribe el cliente).
+  - `/api/cron/notificaciones` acepta GET y POST, con comparación en tiempo constante.
+  - Programadores: `.github/workflows/notificaciones.yml` (cada 5 min; requiere secretos `APP_URL` y `CRON_SECRET` en GitHub) + `vercel.json` con un cron diario de respaldo (Hobby no admite más frecuencia).
+  - Bug corregido: sin `RESEND_API_KEY` el cron marcaba los mails como `SKIPPED` y se perdían; ahora la cola queda `PENDING` hasta que se configure Resend.
+  - Verificado contra un Postgres temporal (embedded-postgres, fuera del repo): migración = schema, `tsc`, `eslint`, `npm test` (57), `check:reservas`, `check:ui` (incluye el freno de login) y `npm run build` en verde; endpoint de cron probado con GET/POST, sin auth y con auth mala.
+- Mails y cron: el envío real requiere `RESEND_API_KEY` + `MAIL_FROM` (dominio verificado en Resend) y los secretos de GitHub Actions.
 - Aviso de `pg` en las pruebas ("client.query() while already executing"): viene de consultas en paralelo dentro de una transacción (`Promise.all` con el cliente `tx`); hoy anda, pero dejaría de andar con `pg@9`.
 - 2026-10-13: revisión completa para presentar el proyecto. Todo verde: `tsc`, `eslint`, `npm test` (57), `check:reservas` (con pruebas nuevas), `check:ui` (65 verificaciones, estable en 3 corridas seguidas) y `npm run build` de producción.
 - Se verificó que cada página y acción de servidor exige sesión/rol (admin, `requireConfigUser`, `requireStaff`) y que 6 pedidos simultáneos por el mismo horario guardan un solo turno.
@@ -67,12 +73,10 @@ Usuarios de ejemplo (solo desarrollo): `admin@salus.local`, `secretaria@salus.lo
 ## Pendientes / próximos pasos
 
 - Revocar el token de Vercel que se usó para el deploy (se pegó en el chat).
-- Programar el cron de mails (Vercel Cron) y cargar `RESEND_API_KEY` si se quiere que salgan avisos.
+- Cargar los secretos `APP_URL` y `CRON_SECRET` en GitHub (Settings → Secrets → Actions), y `RESEND_API_KEY` + `MAIL_FROM` en Vercel, para que salgan los avisos.
 - Antes de salir a producción real:
-  - El límite de pedidos vive en memoria y confía en `x-forwarded-for`: detrás de un proxy hay que fijar cuál IP es confiable y, con varias instancias (Vercel ya lo es), usar Redis/Upstash. En Vercel el límite del login se vuelve casi inútil hasta hacer esto.
   - La demo deployada tiene usuarios con contraseñas públicas (README): no usar con datos reales.
   - Un mail en estado `SENDING` que quede colgado por una caída del proceso nunca se reintenta.
-  - El endpoint de cron solo acepta `POST` (algunos programadores usan `GET`).
   - `birthDateSchema` compara con la fecha UTC (margen de unas horas por la noche).
   - `public/` tiene los SVG de ejemplo de Next sin usar.
 

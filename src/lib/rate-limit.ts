@@ -1,41 +1,60 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
+import { db } from "@/lib/db";
 
 /**
  * Límite de pedidos por IP para los formularios públicos (evita que alguien llene la agenda
- * con reservas falsas). Vive en memoria del servidor: alcanza para un solo servidor, pero cuando
- * Salus se publique con varias instancias hay que pasarlo a un almacén compartido (Redis/Upstash).
+ * con reservas falsas) y freno a la fuerza bruta del login. Los pedidos se cuentan en la base
+ * (tabla RateLimitHit) y no en la memoria del servidor: en Vercel cada pedido puede caer en una
+ * instancia distinta y un contador en memoria nunca llegaría al límite.
  */
-const hits = new Map<string, number[]>();
 
+/** Los pedidos más viejos que esto ya no cuentan para ninguna ventana y se borran. */
+const KEEP_MS = 24 * 3_600_000;
+const PURGE_PROBABILITY = 0.02;
+
+/**
+ * IP del cliente, o "local" si no hay forma de saberla.
+ *
+ * Los encabezados que manda el propio cliente se pueden falsificar, así que solo se leen los que
+ * agrega la infraestructura: en Vercel, `x-vercel-forwarded-for` (que Vercel pisa siempre). Detrás de
+ * otro proxy se toma la ÚLTIMA IP de `x-forwarded-for`, la que agregó el proxy más cercano; la primera
+ * la escribe el cliente. Si el despliegue tiene más de un proxy delante, ajustar acá.
+ */
 export async function clientIp() {
   const h = await headers();
-  return h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || "local";
+  if (process.env.VERCEL) {
+    return h.get("x-vercel-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || "local";
+  }
+  return h.get("x-real-ip") || h.get("x-forwarded-for")?.split(",").at(-1)?.trim() || "local";
 }
 
-/** Pedidos de la ventana que siguen vigentes para esa clave (y descarta los vencidos). */
-function recent(key: string, windowMs: number, now: number) {
-  const list = (hits.get(key) ?? []).filter((t) => now - t < windowMs);
-  hits.set(key, list);
-  return list;
+async function keyFor(bucket: string) {
+  return `${bucket}:${await clientIp()}`;
 }
 
-function remember(key: string, windowMs: number, now: number) {
-  hits.set(key, [...recent(key, windowMs, now), now]);
-
-  // Limpieza ocasional para que el mapa no crezca sin límite.
-  if (hits.size > 5000) {
-    for (const [k, times] of hits) if (times.every((t) => now - t >= windowMs)) hits.delete(k);
+/** Borra de vez en cuando los registros viejos para que la tabla no crezca sin límite. */
+async function maybePurge(now: number) {
+  if (Math.random() < PURGE_PROBABILITY) {
+    await db.rateLimitHit.deleteMany({ where: { createdAt: { lt: new Date(now - KEEP_MS) } } });
   }
 }
 
-/** Devuelve true si el pedido está dentro del límite (y lo cuenta). */
+/**
+ * Devuelve true si el pedido está dentro del límite (y lo cuenta). Es una sola sentencia: inserta
+ * solo si todavía hay lugar en la ventana, así no hay un "contar y después insertar" separado.
+ * Dos pedidos exactamente simultáneos pueden pasar los dos; para un freno de frecuencia alcanza.
+ */
 export async function allowRequest(bucket: string, max: number, windowMs: number) {
-  const key = `${bucket}:${await clientIp()}`;
+  const key = await keyFor(bucket);
   const now = Date.now();
-  if (recent(key, windowMs, now).length >= max) return false;
-  remember(key, windowMs, now);
-  return true;
+  const inserted = await db.$executeRaw`
+    INSERT INTO "RateLimitHit" ("id", "key", "createdAt")
+    SELECT ${randomUUID()}, ${key}, ${new Date(now)}
+    WHERE (SELECT count(*) FROM "RateLimitHit" WHERE "key" = ${key} AND "createdAt" > ${new Date(now - windowMs)}) < ${max}`;
+  await maybePurge(now);
+  return inserted > 0;
 }
 
 /**
@@ -43,10 +62,13 @@ export async function allowRequest(bucket: string, max: number, windowMs: number
  * contar y `recordFailure` suma uno. Así entrar bien nunca te acerca al límite.
  */
 export async function isBlocked(bucket: string, max: number, windowMs: number) {
-  const key = `${bucket}:${await clientIp()}`;
-  return recent(key, windowMs, Date.now()).length >= max;
+  const key = await keyFor(bucket);
+  const used = await db.rateLimitHit.count({ where: { key, createdAt: { gt: new Date(Date.now() - windowMs) } } });
+  return used >= max;
 }
 
-export async function recordFailure(bucket: string, windowMs: number) {
-  remember(`${bucket}:${await clientIp()}`, windowMs, Date.now());
+export async function recordFailure(bucket: string) {
+  const now = Date.now();
+  await db.rateLimitHit.create({ data: { key: await keyFor(bucket), createdAt: new Date(now) } });
+  await maybePurge(now);
 }

@@ -6,6 +6,11 @@ export type MailResult =
   | { ok: false; skipped: true; error: string }
   | { ok: false; skipped: false; error: string };
 
+/** true si hay con qué enviar mails (clave de Resend y remitente). */
+export function isMailConfigured() {
+  return Boolean(process.env.RESEND_API_KEY && process.env.MAIL_FROM);
+}
+
 /**
  * Envía un mail con Resend (https://resend.com) usando su API REST.
  * Requiere RESEND_API_KEY y MAIL_FROM (un remitente de un dominio verificado en Resend,

@@ -42,8 +42,8 @@ export async function login(_prev: LoginState, formData: FormData): Promise<Logi
 
   const ok = await bcrypt.compare(parsed.data.password, user?.passwordHash ?? DUMMY_HASH);
   if (!user || !ok || !user.active) {
-    await recordFailure(emailBucket, LOGIN_WINDOW_MS);
-    await recordFailure("login", LOGIN_WINDOW_MS);
+    await recordFailure(emailBucket);
+    await recordFailure("login");
     await audit({
       userId: user?.id,
       action: "LOGIN_FAILED",

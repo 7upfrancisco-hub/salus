@@ -408,6 +408,18 @@ model NotificationLog {
   @@index([status, scheduledFor])
 }
 
+/// Un pedido contado por el límite de frecuencia (src/lib/rate-limit.ts). Vive en la base y no en la
+/// memoria del servidor porque en Vercel cada instancia tendría su propio contador.
+model RateLimitHit {
+  id        String   @id @default(cuid())
+  /// "<bucket>:<ip>", por ejemplo "login:ana@mail.com:200.1.2.3".
+  key       String
+  createdAt DateTime @default(now())
+
+  @@index([key, createdAt])
+  @@index([createdAt])
+}
+
 /// Registro de quién hizo qué (turnos creados o cancelados por personal, overrides, cambios de reglas).
 /// Es de solo agregado: la aplicación nunca lo edita ni lo borra.
 model AuditLog {

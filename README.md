@@ -15,7 +15,8 @@ npm run db:seed           # administrador + datos de ejemplo (solo desarrollo)
 npm run dev -- -p 3001    # http://localhost:3001
 ```
 
-Usuarios de ejemplo (solo desarrollo, salen del seed): `admin@salus.local` / `admin1234`,
+Usuarios de ejemplo (**solo desarrollo**: las contraseñas están en el código público del seed, nunca usarlos con
+datos reales; ver `SEED_DEMO` más abajo). Salen del seed: `admin@salus.local` / `admin1234`,
 `secretaria@salus.local` / `secretaria1234`, `perez@salus.local` / `perez1234`.
 
 ## Pruebas
@@ -54,11 +55,23 @@ Usuarios de ejemplo (solo desarrollo, salen del seed): `admin@salus.local` / `ad
 | `DIRECT_URL` | Conexión directa, solo para migraciones. Opcional: también se acepta `DATABASE_URL_UNPOOLED` (la inyecta Neon) |
 | `APP_URL` | Dirección pública, para los links de los mails |
 | `RESEND_API_KEY`, `MAIL_FROM` | Envío de mails con Resend (sin ellas no se envía ninguno) |
-| `CRON_SECRET` | Protege `POST /api/cron/notificaciones`, que envía los mails pendientes |
+| `CRON_SECRET` | Protege `/api/cron/notificaciones` (GET o POST), que envía los mails pendientes |
 
 Los mails (confirmación, recordatorio, cancelación, lista de espera) se encolan al ocurrir el hecho y se
 envían cuando un programador de tareas llama cada pocos minutos a `/api/cron/notificaciones` con
-`Authorization: Bearer <CRON_SECRET>`.
+`Authorization: Bearer <CRON_SECRET>`. Mientras no estén `RESEND_API_KEY` y `MAIL_FROM`, los mails quedan
+en la cola y salen cuando se cargan (no se pierden).
+
+### Programar el envío de mails
+
+El plan gratuito de Vercel solo permite un cron por día, así que hay dos programadores:
+
+- **GitHub Actions** (`.github/workflows/notificaciones.yml`): llama al endpoint cada 5 minutos. Hay que cargar
+  en el repo dos secretos (*Settings → Secrets and variables → Actions*): `APP_URL` y `CRON_SECRET` (el mismo
+  valor que en Vercel). GitHub desactiva los workflows programados de un repo sin actividad en 60 días: si pasa,
+  se reactiva desde la pestaña *Actions*. Para probarlo a mano: *Actions → Enviar mails pendientes → Run workflow*.
+- **Vercel Cron** (`vercel.json`): una llamada diaria de respaldo. Vercel agrega solo el `Authorization` si
+  `CRON_SECRET` está definido en el proyecto.
 
 ## Antes de publicarlo (pendiente)
 
@@ -66,8 +79,8 @@ envían cuando un programador de tareas llama cada pocos minutos a `/api/cron/no
       las reservas con un candado de la base (`pg_advisory_xact_lock`).
 - [ ] No cargar los datos de ejemplo (`SEED_DEMO`) ni las contraseñas del seed; crear un administrador real.
 - [ ] HTTPS, `SESSION_SECRET` y `CRON_SECRET` propios, cuenta y dominio verificado en Resend.
-- [ ] El límite de pedidos de los formularios públicos (`src/lib/rate-limit.ts`) vive en memoria: con más de un
-      servidor hay que pasarlo a un almacén compartido.
+- [x] El límite de pedidos y el freno del login (`src/lib/rate-limit.ts`) se cuentan en la base (tabla
+      `RateLimitHit`), así que valen con varias instancias. La IP sale de `x-vercel-forwarded-for` en Vercel.
 - [ ] Copias de seguridad de la base.
 - [ ] Datos de salud: revisar con el centro las obligaciones de la Ley 25.326 de protección de datos personales
       (consentimiento, registro de la base, política de privacidad).

@@ -2,7 +2,7 @@ import "server-only";
 import { APPOINTMENT_STATUS, NOTIFICATION_KIND, NOTIFICATION_STATUS, WAITLIST_STATUS } from "@/lib/constants";
 import { db } from "@/lib/db";
 import { cancellationEmail, confirmationEmail, formatWhen, reminderEmail, waitlistEmail } from "@/lib/email-templates";
-import { sendEmail } from "@/lib/mail";
+import { isMailConfigured, sendEmail } from "@/lib/mail";
 import { getRequirements } from "@/lib/requirements";
 
 type Tx = Pick<typeof db, "notificationLog" | "waitlistEntry">;
@@ -89,6 +89,10 @@ export async function enqueueWaitlistMatches(
  * así que dos ejecuciones simultáneas no mandan el mismo aviso dos veces.
  */
 export async function processPendingNotifications(limit = 50) {
+  // Sin Resend configurado los mails quedan en la cola (PENDING) en vez de descartarse: cuando se
+  // cargue la clave salen los que sigan vigentes. Los que ya no corresponden se saltean al enviarlos.
+  if (!isMailConfigured()) return { sent: 0, skipped: 0, failed: 0, mailConfigured: false };
+
   const settings = await db.centerSettings.findUnique({ where: { id: 1 } });
   const centerName = settings?.name ?? "Salus";
   const timezone = settings?.timezone ?? "America/Argentina/Buenos_Aires";
@@ -100,7 +104,7 @@ export async function processPendingNotifications(limit = 50) {
     select: { id: true },
   });
 
-  const result = { sent: 0, skipped: 0, failed: 0 };
+  const result = { sent: 0, skipped: 0, failed: 0, mailConfigured: true };
 
   for (const { id } of due) {
     const claimed = await db.notificationLog.updateMany({
