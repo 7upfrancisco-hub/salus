@@ -26,6 +26,7 @@ datos reales; ver `SEED_DEMO` más abajo). Salen del seed: `admin@salus.local` /
 | `npm test` | El motor de turnos (cupos, franjas, feriados, edad…) con tests unitarios |
 | `npm run check:reservas` | El servicio de reservas contra la base (overrides, permisos, lista de espera…) |
 | `npm run check:ui` | Un navegador real haciendo clic: paciente, secretaría, profesional y administración (necesita el servidor corriendo) |
+| `npx tsx scripts/limpiar-demo.mts` | Borra los datos de demostración de la base de `DATABASE_URL` (simulacro; con `--confirmar` borra de verdad) |
 | `npm run turnos -- perez PAMI` | Muestra la disponibilidad real de un profesional y cobertura, sin pantallas |
 
 ## Cómo está armado

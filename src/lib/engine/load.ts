@@ -1,5 +1,5 @@
 import "server-only";
-import { ACTIVE_STATUSES, type QuotaPeriod, type QuotaScope, type VisitType } from "@/lib/constants";
+import { ACTIVE_STATUSES, DEFAULT_TIMEZONE, type QuotaPeriod, type QuotaScope, type VisitType } from "@/lib/constants";
 import { db } from "@/lib/db";
 import { widenRange } from "./periods";
 import type { EngineInput } from "./types";
@@ -45,8 +45,6 @@ export type EngineContext = {
   inputFor(options: InputOptions): EngineInput;
 };
 
-const DEFAULT_TIMEZONE = "America/Argentina/Buenos_Aires";
-
 const parseWeekdays = (csv: string | null) =>
   csv ? csv.split(",").map((n) => Number(n.trim())).filter((n) => Number.isInteger(n)) : null;
 
@@ -67,43 +65,66 @@ export async function loadEngineContext(options: ContextOptions): Promise<Engine
 
   const wide = widenRange(from, to);
 
-  const [settings, blocks, rules, exceptions, appointments] = await Promise.all([
-    client.centerSettings.findUnique({ where: { id: 1 } }),
-    client.agendaBlock.findMany({ where: { professionalId, active: true } }),
-    client.coverageRule.findMany({
-      where: { OR: [{ professionalId }, { professionalId: null, specialtyId: professional.specialtyId }] },
-      include: {
-        windows: true,
-        quotas: true,
-        requirements: { orderBy: { sortOrder: "asc" } },
-      },
-    }),
-    client.scheduleException.findMany({
-      where: {
-        dateFrom: { lte: to },
-        dateTo: { gte: from },
-        OR: [{ professionalId }, { professionalId: null }],
-      },
-    }),
+  const queries = {
+    settings: () => client.centerSettings.findUnique({ where: { id: 1 } }),
+    blocks: () => client.agendaBlock.findMany({ where: { professionalId, active: true } }),
+    rules: () =>
+      client.coverageRule.findMany({
+        relationLoadStrategy: "join",
+        where: { OR: [{ professionalId }, { professionalId: null, specialtyId: professional.specialtyId }] },
+        include: {
+          windows: true,
+          quotas: true,
+          requirements: { orderBy: { sortOrder: "asc" } },
+        },
+      }),
+    exceptions: () =>
+      client.scheduleException.findMany({
+        where: {
+          dateFrom: { lte: to },
+          dateTo: { gte: from },
+          OR: [{ professionalId }, { professionalId: null }],
+        },
+      }),
     // Todos los turnos activos del período: los del profesional ocupan horario y los de cualquier
     // profesional pueden consumir cupos compartidos (por especialidad o por todo el centro).
-    client.appointment.findMany({
-      where: {
-        status: { in: [...ACTIVE_STATUSES] },
-        localDate: { gte: wide.from, lte: wide.to },
-      },
-      select: {
-        id: true,
-        professionalId: true,
-        coverageId: true,
-        startsAt: true,
-        endsAt: true,
-        localDate: true,
-        status: true,
-        professional: { select: { specialtyId: true } },
-      },
-    }),
-  ]);
+    appointments: () =>
+      client.appointment.findMany({
+        where: {
+          status: { in: [...ACTIVE_STATUSES] },
+          localDate: { gte: wide.from, lte: wide.to },
+        },
+        select: {
+          id: true,
+          professionalId: true,
+          coverageId: true,
+          startsAt: true,
+          endsAt: true,
+          localDate: true,
+          status: true,
+          professional: { select: { specialtyId: true } },
+        },
+      }),
+  };
+
+  // Con el cliente de una transacción las consultas van de a una: el driver de Postgres no admite
+  // varias a la vez sobre la misma conexión (avisa hoy y fallaría en pg 9). Con el cliente normal
+  // salen cada una por su conexión del pool, en paralelo.
+  const [settings, blocks, rules, exceptions, appointments] = options.client
+    ? [
+        await queries.settings(),
+        await queries.blocks(),
+        await queries.rules(),
+        await queries.exceptions(),
+        await queries.appointments(),
+      ]
+    : await Promise.all([
+        queries.settings(),
+        queries.blocks(),
+        queries.rules(),
+        queries.exceptions(),
+        queries.appointments(),
+      ]);
 
   const resolved = {
     timezone: settings?.timezone ?? DEFAULT_TIMEZONE,

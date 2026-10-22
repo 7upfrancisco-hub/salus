@@ -82,5 +82,8 @@ export const NOTIFICATION_STATUS = {
   SKIPPED: "SKIPPED",
 } as const;
 
+/** Zona horaria del centro mientras no se configure otra (Configuración → Centro). */
+export const DEFAULT_TIMEZONE = "America/Argentina/Buenos_Aires";
+
 /** Rutas que no pueden usarse como identificador público. */
 export const RESERVED_SLUGS = ["admin", "agenda", "login", "logout", "api", "turno", "_next"];

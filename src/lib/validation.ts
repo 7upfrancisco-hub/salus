@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { DEFAULT_TIMEZONE } from "@/lib/constants";
+import { todayInZone } from "@/lib/time";
 
 /** DNI: solo números, entre 6 y 9 dígitos (se aceptan puntos y espacios al tipearlo). */
 export const dniSchema = z
@@ -17,7 +19,8 @@ export const phoneSchema = z
 
 export const birthDateSchema = z
   .iso.date("Ingresá la fecha de nacimiento")
-  .refine((d) => d >= "1900-01-01" && d <= new Date().toISOString().slice(0, 10), "Fecha de nacimiento inválida");
+  // "Hoy" es el de la zona del centro: con la fecha UTC, de noche aceptaría un mañana o rechazaría un hoy.
+  .refine((d) => d >= "1900-01-01" && d <= todayInZone(DEFAULT_TIMEZONE), "Fecha de nacimiento inválida");
 
 const nameSchema = (label: string) =>
   z.string().trim().min(2, `Ingresá ${label}`).max(60, `${label} es demasiado largo`);

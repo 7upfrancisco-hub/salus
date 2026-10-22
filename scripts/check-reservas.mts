@@ -201,7 +201,38 @@ try {
   console.log("\nMails (sin RESEND_API_KEY no se envía nada)");
   const result = await processPendingNotifications();
   check("procesa la cola sin errores y sin mandar mails reales", result.sent === 0 && result.failed === 0, JSON.stringify(result));
+
+  console.log("\nMails colgados en SENDING");
+  // Con Resend "configurado" a medias (clave falsa) se ejecuta la recuperación; los mails de prueba no
+  // tienen turno ni lista de espera, así que terminan salteados sin llegar nunca a enviarse.
+  const sendingBase = { kind: "CONFIRMATION", toAddress: "check-sending@salus.local", status: "SENDING", scheduledFor: new Date() };
+  const stuck = await db.notificationLog.create({ data: { ...sendingBase, claimedAt: new Date(Date.now() - 30 * 60_000) } });
+  const legacy = await db.notificationLog.create({ data: { ...sendingBase, claimedAt: null } });
+  const inFlight = await db.notificationLog.create({ data: { ...sendingBase, claimedAt: new Date() } });
+  const previous = { key: process.env.RESEND_API_KEY, from: process.env.MAIL_FROM };
+  process.env.RESEND_API_KEY = "clave-falsa-de-prueba";
+  process.env.MAIL_FROM = "Prueba <prueba@salus.local>";
+  // Con la clave falsa, cualquier otro mail pendiente de la cola intentaría salir: se bloquea la red.
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error("sin red en la prueba");
+  };
+  try {
+    const recovery = await processPendingNotifications();
+    const statusOf = async (id: string) => (await db.notificationLog.findUniqueOrThrow({ where: { id } })).status;
+    check("el mail colgado hace más de 10 minutos vuelve a la cola y se procesa", (await statusOf(stuck.id)) === "SKIPPED");
+    check("un SENDING anterior a la columna claimedAt también se recupera", (await statusOf(legacy.id)) === "SKIPPED");
+    check("un mail que se está enviando ahora no se toca", (await statusOf(inFlight.id)) === "SENDING");
+    check("informa cuántos reencoló", recovery.requeued === 2, JSON.stringify(recovery));
+  } finally {
+    globalThis.fetch = realFetch;
+    if (previous.key === undefined) delete process.env.RESEND_API_KEY;
+    else process.env.RESEND_API_KEY = previous.key;
+    if (previous.from === undefined) delete process.env.MAIL_FROM;
+    else process.env.MAIL_FROM = previous.from;
+  }
 } finally {
+  await db.notificationLog.deleteMany({ where: { toAddress: "check-sending@salus.local" } });
   // Limpieza: solo lo creado por esta prueba.
   const ids = (await db.patient.findMany({ where: { dni: { startsWith: "9000" } }, select: { id: true } })).map((p) => p.id);
   await db.notificationLog.deleteMany({ where: { OR: [{ appointment: { patientId: { in: ids } } }, { waitlistEntry: { patientId: { in: ids } } }] } });

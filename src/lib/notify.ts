@@ -7,6 +7,9 @@ import { getRequirements } from "@/lib/requirements";
 
 type Tx = Pick<typeof db, "notificationLog" | "waitlistEntry">;
 
+/** Cuánto puede estar un mail en SENDING antes de darlo por colgado (un envío normal tarda segundos). */
+const STALE_SENDING_MS = 10 * 60_000;
+
 /** Dirección pública del sistema, para los links de los mails. */
 export function appUrl() {
   return (process.env.APP_URL ?? "http://localhost:3001").replace(/\/$/, "");
@@ -91,7 +94,17 @@ export async function enqueueWaitlistMatches(
 export async function processPendingNotifications(limit = 50) {
   // Sin Resend configurado los mails quedan en la cola (PENDING) en vez de descartarse: cuando se
   // cargue la clave salen los que sigan vigentes. Los que ya no corresponden se saltean al enviarlos.
-  if (!isMailConfigured()) return { sent: 0, skipped: 0, failed: 0, mailConfigured: false };
+  if (!isMailConfigured()) return { sent: 0, skipped: 0, failed: 0, requeued: 0, mailConfigured: false };
+
+  // Un mail que quedó en SENDING porque el proceso se cayó (timeout, deploy…) vuelve a la cola.
+  // Si el proceso había alcanzado a enviarlo, el paciente lo recibe dos veces: se prefiere eso a perderlo.
+  const stale = await db.notificationLog.updateMany({
+    where: {
+      status: NOTIFICATION_STATUS.SENDING,
+      OR: [{ claimedAt: null }, { claimedAt: { lt: new Date(Date.now() - STALE_SENDING_MS) } }],
+    },
+    data: { status: NOTIFICATION_STATUS.PENDING, claimedAt: null },
+  });
 
   const settings = await db.centerSettings.findUnique({ where: { id: 1 } });
   const centerName = settings?.name ?? "Salus";
@@ -104,12 +117,12 @@ export async function processPendingNotifications(limit = 50) {
     select: { id: true },
   });
 
-  const result = { sent: 0, skipped: 0, failed: 0, mailConfigured: true };
+  const result = { sent: 0, skipped: 0, failed: 0, requeued: stale.count, mailConfigured: true };
 
   for (const { id } of due) {
     const claimed = await db.notificationLog.updateMany({
       where: { id, status: NOTIFICATION_STATUS.PENDING },
-      data: { status: NOTIFICATION_STATUS.SENDING },
+      data: { status: NOTIFICATION_STATUS.SENDING, claimedAt: new Date() },
     });
     if (claimed.count === 0) continue;
 

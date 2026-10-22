@@ -1,6 +1,7 @@
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
+  previewFeatures = ["relationJoins"]
 }
 
 datasource db {
@@ -392,9 +393,12 @@ model NotificationLog {
   kind        String
   channel     String    @default("EMAIL")
   toAddress   String
-  /// PENDING | SENT | FAILED
+  /// PENDING | SENDING | SENT | FAILED | SKIPPED
   status      String    @default("PENDING")
   scheduledFor DateTime
+  /// Cuándo lo tomó un proceso de envío (status SENDING). Si pasa mucho tiempo sin terminar, se
+  /// asume que el proceso se cayó y el mail vuelve a PENDING.
+  claimedAt   DateTime?
   sentAt      DateTime?
   providerMessageId String?
   error       String?
