@@ -38,6 +38,25 @@ Usuarios de ejemplo (solo desarrollo): `admin@salus.local`, `secretaria@salus.lo
 - `prisma/schema.prisma` — modelo de datos (comentado).
 - También: `mail.ts` / `notify.ts` / `email-templates.ts` (notificaciones), `audit.ts` (auditoría), `rate-limit.ts`, `access.ts` / `auth.ts` / `session.ts` (acceso y sesión).
 
+## Turnos preocupacionales y agenda en PDF (2026-10-23)
+
+Pedido del centro: al entrar, preguntar **personal o preocupacional**; personal = cobertura/médico + botón "Buscar turno" y agenda; preocupacional = 3 estudios y agenda; y poder **descargar la agenda del día** (preocupacional y por médico).
+
+Decisiones acordadas con el usuario:
+- Los 3 estudios comparten la agenda (cambia solo el estudio); se cargan/editan en Configuración → Estudios preocupacionales (tabla `OccupationalStudy`, no se borran, se desactivan). No cambian la duración del turno (la grilla es la del bloque del profesional).
+- Preocupacional pide **empresa** (obligatoria) y no obra social. Se mantiene el paso de especialidad en el camino personal.
+- Descarga en **PDF** (`pdf-lib`, hoja A4 apaisada): `/agenda/descargar?profesional=<id>&fecha=…` y `?tipo=preocupacional&fecha=…`.
+
+Cómo está hecho:
+- El preocupacional reutiliza el motor: es una cobertura especial (`Coverage.isOccupational`, creada por la migración `20261023000000_preocupacional`, una sola) con reglas por profesional. `Appointment` suma `studyId` y `company`. El paciente no queda con esa "cobertura habitual" (`upsertPatient` recibe `coverageId: null`).
+- `bookAppointment` valida: la cobertura preocupacional exige estudio activo y empresa; las demás no los aceptan.
+- Turnero (`booking-wizard.tsx`): paso 1 elige el camino; en personal ahora hay botón "Buscar turno" (antes buscaba al elegir médico). Los requisitos de la regla y las indicaciones del estudio se unen sin repetir (`mergeRequirements`).
+- Descarga: `agenda-pdf.ts` (puro, testeado), `agenda-export.ts` (consultas), ruta con permisos (`canManageProfessional` / `getManageableProfessionals`) y auditoría.
+- `limpiar-demo.mts` conserva la cobertura Preocupacional. El seed de demo suma a la Dra. Medina (medicina laboral, martes y jueves) y 3 estudios de ejemplo.
+- Pruebas: 69 unitarias, `check:reservas` con bloque preocupacional/PDF, `check:ui` 93 verificaciones (borra los contadores de rate limit al empezar y terminar: ahora viven en la base y corridas seguidas se bloqueaban).
+
+Pendiente de este tema: el centro tiene que cargar sus 3 estudios reales y crear las reglas «Preocupacional» de sus profesionales; sin eso el turnero muestra "no hay turnos preocupacionales online".
+
 ## Reglas de negocio acordadas
 
 - La semana va de lunes a domingo; el mes es de calendario.
@@ -77,8 +96,11 @@ Usuarios de ejemplo (solo desarrollo): `admin@salus.local`, `secretaria@salus.lo
 
 ## Pendientes / próximos pasos
 
+- **Actualizar Next.js (seguridad)**: `npm audit` marca `next` 16.0.0–16.4.0 con avisos críticos (RCE en optimización de imágenes con SVG, DoS en Server Actions, RCE en `use cache`); el arreglo está en 16.4.3. El proyecto fija `16.4.0` exacto. Probar con la suite completa antes de subir.
+
 - Revocar el token de Vercel que se usó para el deploy (se pegó en el chat).
-- Cargar los secretos `APP_URL` y `CRON_SECRET` en GitHub (Settings → Secrets → Actions), y `RESEND_API_KEY` + `MAIL_FROM` en Vercel, para que salgan los avisos.
+- Mails a pacientes: en pausa hasta presentarle la propuesta al centro y que acepten pagar el dominio (~USD 10/año). Con el dominio: verificarlo en Resend y cargar `RESEND_API_KEY` + `MAIL_FROM` en Vercel. Mientras tanto los mails quedan en cola. Alternativa sin dominio (peor entrega): Brevo o SMTP de Gmail, requiere cambiar `mail.ts`.
+- Secretos `APP_URL` y `CRON_SECRET` en GitHub (Settings → Secrets → Actions): hechos el 2026-10-22.
 - Antes de salir a producción real:
   - La demo deployada tiene usuarios con contraseñas públicas (README): no usar con datos reales.
   - `public/` tiene los SVG de ejemplo de Next sin usar.

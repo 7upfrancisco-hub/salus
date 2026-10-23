@@ -25,6 +25,9 @@ export type AppointmentView = {
   phone: string;
   email: string | null;
   coverage: CoverageInfo;
+  /** Solo en turnos preocupacionales. */
+  studyName: string | null;
+  company: string | null;
   affiliateNumber: string | null;
   officeName: string | null;
   notes: string | null;
@@ -76,7 +79,7 @@ export async function buildRangeView(professionalId: string, from: string, to: s
     db.coverage.findMany({ where: { active: true }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }] }),
     db.appointment.findMany({
       where: { professionalId, localDate: { gte: from, lte: to } },
-      include: { patient: true, coverage: true, office: true, createdBy: { select: { name: true } } },
+      include: { patient: true, coverage: true, study: { select: { name: true } }, office: true, createdBy: { select: { name: true } } },
       orderBy: { startsAt: "asc" },
     }),
     db.scheduleException.findMany({
@@ -115,6 +118,8 @@ export async function buildRangeView(professionalId: string, from: string, to: s
       phone: a.patient.phone,
       email: a.patient.email,
       coverage: infoOf(coverageById.get(a.coverageId) ?? { ...a.coverage }),
+      studyName: a.study?.name ?? null,
+      company: a.company,
       affiliateNumber: a.affiliateNumber,
       officeName: a.officeId ? (offices.get(a.officeId) ?? null) : null,
       notes: a.notes,

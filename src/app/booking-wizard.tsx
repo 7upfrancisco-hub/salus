@@ -3,10 +3,12 @@
 import { useActionState, useRef, useState, type ReactNode } from "react";
 import { inputClass } from "@/components/ui";
 import { ageInYears } from "@/lib/engine/periods";
+import { mergeRequirements, studyInstructionLines } from "@/lib/studies";
 import { capitalizeFirst } from "@/lib/time";
-import type { ProfessionalOption, PublicAvailability, PublicSlot, SpecialtyOption } from "@/lib/public";
+import type { OccupationalOffer, ProfessionalOption, PublicAvailability, PublicSlot, SpecialtyOption } from "@/lib/public";
 import {
   getAvailability,
+  getOccupationalAvailability,
   getProfessionals,
   getSpecialties,
   submitBooking,
@@ -18,6 +20,8 @@ import {
 type Coverage = { id: string; name: string; isParticular: boolean };
 type Choice = { date: string; slot: PublicSlot };
 type VisitType = "FIRST" | "CONTROL";
+/** Personal: cobertura → especialidad → médico. Preocupacional: estudio → agenda (sin obra social). */
+type Kind = "PERSONAL" | "OCCUPATIONAL";
 
 const bookingInitial: BookingState = {};
 const waitlistInitial: WaitlistState = {};
@@ -68,7 +72,11 @@ function FieldError({ message }: { message?: string }) {
   return message ? <p className="mt-1 text-xs text-red-600">{message}</p> : null;
 }
 
-export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
+export function BookingWizard({ coverages, occupational }: { coverages: Coverage[]; occupational: OccupationalOffer | null }) {
+  const [kind, setKind] = useState<Kind | null>(null);
+  const [studyId, setStudyId] = useState<string | null>(null);
+  /** El paciente ya pidió ver la agenda (botón "Buscar turno" o, en preocupacional, al elegir el estudio). */
+  const [searched, setSearched] = useState(false);
   const [coverageId, setCoverageId] = useState<string | null>(null);
   const [specialties, setSpecialties] = useState<SpecialtyOption[] | null>(null);
   const [specialtyId, setSpecialtyId] = useState<string | null>(null);
@@ -90,6 +98,11 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
   const requestId = useRef(0);
 
   const coverage = coverages.find((c) => c.id === coverageId) ?? null;
+  const isOccupational = kind === "OCCUPATIONAL";
+  const study = occupational?.studies.find((s) => s.id === studyId) ?? null;
+  // La cobertura con la que se reserva: la elegida (personal) o la de preocupacional.
+  const bookingCoverage: Coverage | null =
+    isOccupational && occupational ? { id: occupational.coverageId, name: "Preocupacional", isParticular: false } : coverage;
   const specialty = specialties?.find((s) => s.id === specialtyId) ?? null;
   const hasAgeLimit = !!specialty && (specialty.minAgeYears !== null || specialty.maxAgeYears !== null);
   const birthDateValid = /^\d{4}-\d{2}-\d{2}$/.test(birthDate) && birthDate >= "1900-01-01" && birthDate <= new Date().toISOString().slice(0, 10);
@@ -110,11 +123,43 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
   }
   function resetBelowProfessional() {
     setProfessionalId(null);
+    clearSearch();
+  }
+  /** Descarta la agenda mostrada (otro médico, otro estudio…): hay que volver a buscar. */
+  function clearSearch() {
     setAvailability(null);
     setDayChosen(null);
     setChoice(null);
     setShowAllDays(false);
     setShowWaitlist(false);
+    setSearched(false);
+  }
+
+  function chooseKind(next: Kind) {
+    if (next === kind) return;
+    requestId.current += 1; // ignora respuestas pendientes del camino anterior
+    setKind(next);
+    setLoading(false);
+    setCoverageId(null);
+    setStudyId(null);
+    resetBelowCoverage();
+  }
+
+  async function chooseStudy(id: string) {
+    setStudyId(id);
+    await searchOccupational();
+  }
+
+  async function searchOccupational() {
+    const mine = ++requestId.current;
+    setLoading(true);
+    clearSearch();
+    setSearched(true);
+    setProfessionalId(ANY); // en la lista de horarios se muestra qué profesional atiende cada uno
+    const result = await getOccupationalAvailability();
+    if (mine !== requestId.current) return;
+    setAvailability(result);
+    setLoading(false);
   }
 
   async function chooseCoverage(id: string) {
@@ -152,10 +197,8 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
     if (!cov || !specialtyId) return;
     const mine = ++requestId.current;
     setLoading(true);
-    setAvailability(null);
-    setChoice(null);
-    setDayChosen(null);
-    setShowWaitlist(false);
+    clearSearch();
+    setSearched(true);
     const result = await getAvailability({
       coverageId: cov,
       specialtyId,
@@ -168,9 +211,16 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
     setLoading(false);
   }
 
-  async function chooseProfessional(target: string) {
+  /** Elegir médico solo lo marca: la agenda se muestra al apretar "Buscar turno". */
+  function chooseProfessional(target: string) {
     setProfessionalId(target);
-    await search(target, visitType);
+    clearSearch();
+  }
+
+  /** Vuelve a buscar con lo ya elegido ("Actualizar horarios"). */
+  async function refresh() {
+    if (isOccupational) await searchOccupational();
+    else if (professionalId) await search(professionalId, visitType);
   }
 
   async function changeVisitType(next: VisitType) {
@@ -187,25 +237,68 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
   const visibleDays = showAllDays ? days : days.slice(0, DAYS_VISIBLE);
   const slotsOfDay = days.find((d) => d.date === dayChosen)?.slots ?? [];
   const firstSlot = days[0]?.slots[0];
-  const requirements = choice ? (availability?.requirementsByProfessional[choice.slot.professionalId] ?? []) : [];
-  const showBookingForm = !!choice && !!coverage;
+  const requirements = choice
+    ? mergeRequirements(
+        availability?.requirementsByProfessional[choice.slot.professionalId] ?? [],
+        isOccupational ? studyInstructionLines(study?.instructions) : [],
+      )
+    : [];
+  const showBookingForm = !!choice && !!bookingCoverage && (!isOccupational || !!study);
   const errors = bookingState.fieldErrors ?? {};
   const waitErrors = waitState.fieldErrors ?? {};
 
+  // Numeración de los pasos según el camino elegido.
+  let stepNumber = 0;
+  const nextStep = () => ++stepNumber;
+
   return (
     <div className="space-y-5">
-      <Step n={1} title="¿Con qué cobertura te atendés?">
-        <div className="flex flex-wrap gap-2">
-          {coverages.map((c) => (
-            <Option key={c.id} selected={c.id === coverageId} onClick={() => chooseCoverage(c.id)}>
-              {c.name}
-            </Option>
-          ))}
+      <Step n={nextStep()} title="¿Qué tipo de turno necesitás?">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Option selected={kind === "PERSONAL"} onClick={() => chooseKind("PERSONAL")}>
+            <span className="block font-medium">Personal</span>
+            <span className="block text-xs text-zinc-500">Consulta con un médico, con obra social o particular</span>
+          </Option>
+          <Option selected={kind === "OCCUPATIONAL"} onClick={() => chooseKind("OCCUPATIONAL")}>
+            <span className="block font-medium">Preocupacional</span>
+            <span className="block text-xs text-zinc-500">Estudio laboral solicitado por una empresa</span>
+          </Option>
         </div>
       </Step>
 
-      {coverage && (
-        <Step n={2} title="¿Qué especialidad necesitás?">
+      {kind === "OCCUPATIONAL" && (
+        <Step n={nextStep()} title="¿Qué estudio necesitás?">
+          {!occupational ? (
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              Por el momento no hay turnos preocupacionales online. Comunicate con el centro para consultar.
+            </p>
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {occupational.studies.map((st) => (
+                <Option key={st.id} selected={st.id === studyId} onClick={() => chooseStudy(st.id)}>
+                  <span className="block font-medium">{st.name}</span>
+                  {st.description && <span className="block text-xs text-zinc-500">{st.description}</span>}
+                </Option>
+              ))}
+            </div>
+          )}
+        </Step>
+      )}
+
+      {kind === "PERSONAL" && (
+        <Step n={nextStep()} title="¿Con qué cobertura te atendés?">
+          <div className="flex flex-wrap gap-2">
+            {coverages.map((c) => (
+              <Option key={c.id} selected={c.id === coverageId} onClick={() => chooseCoverage(c.id)}>
+                {c.name}
+              </Option>
+            ))}
+          </div>
+        </Step>
+      )}
+
+      {kind === "PERSONAL" && coverage && (
+        <Step n={nextStep()} title="¿Qué especialidad necesitás?">
           {specialties === null ? (
             <p className="text-sm text-zinc-500">Buscando especialidades…</p>
           ) : specialties.length === 0 ? (
@@ -264,8 +357,8 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
         </Step>
       )}
 
-      {coverage && specialty && readyForProfessional && professionals && (
-        <Step n={3} title="¿Con quién?">
+      {kind === "PERSONAL" && coverage && specialty && readyForProfessional && professionals && (
+        <Step n={nextStep()} title="¿Con quién?">
           {professionals.length === 0 ? (
             <p className="text-sm text-zinc-600">No hay profesionales disponibles para esta combinación.</p>
           ) : (
@@ -280,11 +373,20 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
               ))}
             </div>
           )}
+          {professionalId && !searched && (
+            <button
+              type="button"
+              onClick={() => search(professionalId, visitType)}
+              className="mt-4 w-full rounded-lg bg-teal-600 px-4 py-3 font-medium text-white transition hover:bg-teal-700 sm:w-auto"
+            >
+              Buscar turno
+            </button>
+          )}
         </Step>
       )}
 
-      {professionalId && (
-        <Step n={4} title="Elegí día y horario">
+      {searched && (
+        <Step n={nextStep()} title="Elegí día y horario">
           {availability?.askVisitType && (
             <fieldset className="mb-4">
               <legend className="mb-1 text-sm font-medium">¿Ya te atendiste antes con este profesional?</legend>
@@ -305,9 +407,11 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
           ) : days.length === 0 ? (
             <div className="space-y-3">
               <p className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-100">
-                No hay turnos disponibles con {coverage?.name} por el momento.
+                {isOccupational
+                  ? "No hay turnos preocupacionales disponibles por el momento. Comunicate con el centro."
+                  : `No hay turnos disponibles con ${coverage?.name} por el momento.`}
               </p>
-              {availability.particularAlternative && (
+              {!isOccupational && availability.particularAlternative && (
                 <button
                   type="button"
                   onClick={() => switchToParticular(availability.particularAlternative!.coverageId)}
@@ -317,7 +421,7 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
                   <span className="block text-zinc-600 dark:text-zinc-400">Hay turnos disponibles si te atendés de forma particular.</span>
                 </button>
               )}
-              {!showWaitlist && !waitState.ok && (
+              {!isOccupational && !showWaitlist && !waitState.ok && (
                 <button
                   type="button"
                   onClick={() => setShowWaitlist(true)}
@@ -384,7 +488,7 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
           {bookingState.slotTaken && (
             <div role="alert" className="mt-3 rounded-lg bg-amber-100 p-3 text-sm text-amber-900">
               {bookingState.error}{" "}
-              <button type="button" onClick={() => professionalId && search(professionalId, visitType)} className="font-medium underline">
+              <button type="button" onClick={refresh} className="font-medium underline">
                 Actualizar horarios
               </button>
             </div>
@@ -392,8 +496,8 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
         </Step>
       )}
 
-      {showWaitlist && coverage && specialty && (
-        <Step n={5} title="Lista de espera">
+      {!isOccupational && showWaitlist && coverage && specialty && (
+        <Step n={nextStep()} title="Lista de espera">
           {waitState.ok ? (
             <p className="rounded-xl bg-green-50 p-4 text-sm text-green-900">
               ¡Listo! Te anotamos. Si se libera un turno te avisamos por mail.
@@ -414,12 +518,14 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
         </Step>
       )}
 
-      {showBookingForm && choice && coverage && (
-        <Step n={5} title="Tus datos">
+      {showBookingForm && choice && bookingCoverage && (
+        <Step n={nextStep()} title="Tus datos">
           <p className="mb-4 rounded-lg bg-zinc-100 p-3 text-sm dark:bg-zinc-900">
             <strong>{longDay(choice.date)}</strong> a las <strong>{choice.slot.time} hs</strong>
             <br />
-            {choice.slot.professionalName} · {specialty?.name} · {coverage.name}
+            {isOccupational
+              ? `${choice.slot.professionalName} · Preocupacional: ${study?.name}`
+              : `${choice.slot.professionalName} · ${specialty?.name} · ${coverage?.name}`}
           </p>
 
           {requirements.length > 0 && (
@@ -434,11 +540,23 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
           )}
 
           <form action={bookingAction} className="space-y-4">
-            <input type="hidden" name="coverageId" value={coverage.id} />
+            <input type="hidden" name="coverageId" value={bookingCoverage.id} />
             <input type="hidden" name="professionalId" value={choice.slot.professionalId} />
             <input type="hidden" name="date" value={choice.date} />
             <input type="hidden" name="startMinutes" value={choice.slot.startMinutes} />
-            <PatientFields errors={errors} showAffiliate={!coverage.isParticular} defaultBirthDate={birthDate} values={bookingState.values} />
+            {isOccupational && study && (
+              <>
+                <input type="hidden" name="occupational" value="1" />
+                <input type="hidden" name="studyId" value={study.id} />
+              </>
+            )}
+            <PatientFields
+              errors={errors}
+              showAffiliate={!isOccupational && !bookingCoverage.isParticular}
+              showCompany={isOccupational}
+              defaultBirthDate={birthDate}
+              values={bookingState.values}
+            />
             <div>
               <label htmlFor="notes" className="mb-1 block text-sm font-medium">
                 Comentarios <span className="font-normal text-zinc-500">(opcional)</span>
@@ -465,11 +583,14 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
 function PatientFields({
   errors,
   showAffiliate,
+  showCompany = false,
   defaultBirthDate,
   values,
 }: {
   errors: Record<string, string>;
   showAffiliate: boolean;
+  /** Preocupacional: la empresa que solicita el estudio. */
+  showCompany?: boolean;
   defaultBirthDate: string;
   /** Lo que la persona ya había escrito: React borra el formulario tras cada envío, así que se repone. */
   values?: Record<string, string>;
@@ -499,6 +620,7 @@ function PatientFields({
         {field("email", "Email", { type: "email", autoComplete: "email" })}
         {field("phone", "Teléfono / WhatsApp", { type: "tel", autoComplete: "tel", placeholder: "11 2345 6789" })}
         {showAffiliate && field("affiliateNumber", "Número de afiliado", { required: false, autoComplete: "off" })}
+        {showCompany && field("company", "Empresa que solicita el estudio", { autoComplete: "organization", maxLength: 80 })}
       </div>
     </>
   );

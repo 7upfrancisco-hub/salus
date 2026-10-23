@@ -43,11 +43,37 @@ async function seedDemo() {
     db.coverage.create({ data: { name: "OSDE", sortOrder: 2, color: "#ea580c" } }),
   ]);
 
-  const [trauma, pedia, neuro] = await Promise.all([
+  const [trauma, pedia, neuro, laboral] = await Promise.all([
     db.specialty.create({ data: { name: "Traumatología" } }),
     db.specialty.create({ data: { name: "Pediatría", minAgeYears: 0, maxAgeYears: 17 } }),
     db.specialty.create({ data: { name: "Neurología" } }),
+    db.specialty.create({ data: { name: "Medicina laboral" } }),
   ]);
+
+  // La cobertura "Preocupacional" la crea una migración (no es una obra social: ver Coverage.isOccupational).
+  const preocupacional = await db.coverage.findFirstOrThrow({ where: { isOccupational: true } });
+  await db.occupationalStudy.createMany({
+    data: [
+      {
+        name: "Examen preocupacional básico",
+        description: "Examen clínico general.",
+        instructions: "DNI\nNota o pedido de la empresa",
+        sortOrder: 0,
+      },
+      {
+        name: "Examen con laboratorio",
+        description: "Incluye análisis de sangre y orina.",
+        instructions: "Venir con 8 horas de ayuno\nDNI\nNota o pedido de la empresa",
+        sortOrder: 1,
+      },
+      {
+        name: "Examen con estudios complementarios",
+        description: "Incluye radiografía de tórax y audiometría.",
+        instructions: "DNI\nNota o pedido de la empresa",
+        sortOrder: 2,
+      },
+    ],
+  });
 
   const [c1, c2, c3] = await Promise.all([
     db.office.create({ data: { name: "Consultorio 1" } }),
@@ -58,6 +84,7 @@ async function seedDemo() {
   const perez = await db.professional.create({ data: { name: "Dr. Pérez", licenseNumber: "MP 1001", specialtyId: trauma.id } });
   const gomez = await db.professional.create({ data: { name: "Dra. Gómez", licenseNumber: "MP 1002", specialtyId: pedia.id } });
   const ruiz = await db.professional.create({ data: { name: "Dr. Ruiz", licenseNumber: "MP 1003", specialtyId: neuro.id } });
+  const medina = await db.professional.create({ data: { name: "Dra. Medina", licenseNumber: "MP 1004", specialtyId: laboral.id } });
 
   // Capa 1: agenda base
   const blocks = (professionalId: string, officeId: string, days: number[], from: number, to: number, slot: number) =>
@@ -67,6 +94,7 @@ async function seedDemo() {
       ...blocks(perez.id, c1.id, [MON, WED, FRI], hm(9), hm(13), 20),
       ...blocks(gomez.id, c2.id, [MON, TUE, WED, THU], hm(14), hm(18), 30),
       ...blocks(ruiz.id, c3.id, [TUE, THU], hm(8), hm(12), 30),
+      ...blocks(medina.id, c1.id, [TUE, THU], hm(8), hm(12), 20),
     ],
   });
 
@@ -103,6 +131,9 @@ async function seedDemo() {
       quotas: [{ period: "WEEK", max: 8 }],
       requirements: ["Orden médica", "Credencial OSDE"] },
     { professionalId: ruiz.id, coverageId: particular.id, days: [TUE, THU], from: hm(10), to: hm(12),
+      requirements: ["DNI"] },
+    // Dra. Medina (medicina laboral): solo preocupacionales, martes y jueves de mañana
+    { professionalId: medina.id, coverageId: preocupacional.id, days: [TUE, THU], from: hm(8), to: hm(12),
       requirements: ["DNI"] },
   ];
 
@@ -141,7 +172,7 @@ async function seedDemo() {
     },
   });
 
-  console.log("Datos de ejemplo cargados (3 profesionales, 3 coberturas, 8 reglas, 2 usuarios).");
+  console.log("Datos de ejemplo cargados (4 profesionales, 4 coberturas con Preocupacional, 9 reglas, 3 estudios, 2 usuarios).");
 }
 
 async function main() {

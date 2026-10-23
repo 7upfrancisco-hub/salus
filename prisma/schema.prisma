@@ -109,6 +109,9 @@ model Coverage {
   sortOrder    Int     @default(0)
   /// Color con el que se identifica la cobertura en la agenda de la secretaria.
   color        String  @default("#0d9488")
+  /// true para la cobertura "Preocupacional" (la crea una migración; hay una sola). Sus turnos no son de una
+  /// obra social: llevan el estudio elegido y la empresa que lo pide, y se ofrecen por su propio camino en el turnero.
+  isOccupational Boolean @default(false)
 
   rules        CoverageRule[]
   patients     Patient[]
@@ -337,6 +340,11 @@ model Appointment {
   cancelledAt  DateTime?
   cancelReason String?
 
+  /// Solo en turnos preocupacionales: el estudio elegido y la empresa que lo solicita.
+  studyId String?
+  study   OccupationalStudy? @relation(fields: [studyId], references: [id], onDelete: Restrict)
+  company String?
+
   professionalId String
   professional   Professional @relation(fields: [professionalId], references: [id], onDelete: Restrict)
   patientId      String
@@ -358,6 +366,22 @@ model Appointment {
   @@index([coverageId, localDate])
   @@index([patientId])
   @@index([localDate])
+}
+
+/// Estudios que se pueden pedir en un turno preocupacional. El paciente elige uno al reservar; todos
+/// comparten la agenda de los profesionales que tienen regla para la cobertura "Preocupacional".
+model OccupationalStudy {
+  id           String  @id @default(cuid())
+  name         String  @unique
+  /// Texto corto que se muestra debajo del nombre al elegirlo.
+  description  String?
+  /// Qué traer o cómo prepararse (una indicación por línea). Se muestra al reservar y en el turno.
+  instructions String?
+  /// Desactivar lo oculta del turnero sin perder el historial de los turnos ya dados.
+  active       Boolean @default(true)
+  sortOrder    Int     @default(0)
+
+  appointments Appointment[]
 }
 
 /// Pacientes esperando que se libere un turno.

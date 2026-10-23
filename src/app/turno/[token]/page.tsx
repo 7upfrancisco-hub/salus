@@ -6,6 +6,7 @@ import { APPOINTMENT_STATUS } from "@/lib/constants";
 import { db } from "@/lib/db";
 import { formatWhen } from "@/lib/email-templates";
 import { getRequirements } from "@/lib/requirements";
+import { mergeRequirements, studyInstructionLines } from "@/lib/studies";
 import { APPOINTMENT_STATUS_LABEL } from "@/lib/status-labels";
 import { ManageButtons } from "./manage-buttons";
 
@@ -27,7 +28,7 @@ export default async function MyAppointmentPage({ params }: PageProps<"/turno/[t
 
   const appointment = await db.appointment.findUnique({
     where: { manageToken: token },
-    include: { patient: true, professional: { include: { specialty: true } }, coverage: true, office: true },
+    include: { patient: true, professional: { include: { specialty: true } }, coverage: true, study: true, office: true },
   });
   if (!appointment) notFound();
 
@@ -41,7 +42,13 @@ export default async function MyAppointmentPage({ params }: PageProps<"/turno/[t
   const upcoming = appointment.startsAt > now;
   const withinCancelLimit = appointment.startsAt.getTime() - now.getTime() >= limitHours * 3_600_000;
 
-  const requirements = active && upcoming ? await getRequirements(appointment.professionalId, appointment.coverageId) : [];
+  const requirements =
+    active && upcoming
+      ? mergeRequirements(
+          await getRequirements(appointment.professionalId, appointment.coverageId),
+          studyInstructionLines(appointment.study?.instructions),
+        )
+      : [];
 
   return (
     <main className="mx-auto w-full max-w-md flex-1 px-4 py-10">
@@ -59,7 +66,15 @@ export default async function MyAppointmentPage({ params }: PageProps<"/turno/[t
         <dl className="space-y-1 text-sm">
           <div className="flex gap-2"><dt className="w-28 text-zinc-500">Profesional</dt><dd>{appointment.professional.name}</dd></div>
           <div className="flex gap-2"><dt className="w-28 text-zinc-500">Especialidad</dt><dd>{appointment.professional.specialty.name}</dd></div>
-          <div className="flex gap-2"><dt className="w-28 text-zinc-500">Cobertura</dt><dd>{appointment.coverage.name}</dd></div>
+          {appointment.coverage.isOccupational ? (
+            <>
+              <div className="flex gap-2"><dt className="w-28 text-zinc-500">Turno</dt><dd>Preocupacional</dd></div>
+              {appointment.study && <div className="flex gap-2"><dt className="w-28 text-zinc-500">Estudio</dt><dd>{appointment.study.name}</dd></div>}
+              {appointment.company && <div className="flex gap-2"><dt className="w-28 text-zinc-500">Empresa</dt><dd>{appointment.company}</dd></div>}
+            </>
+          ) : (
+            <div className="flex gap-2"><dt className="w-28 text-zinc-500">Cobertura</dt><dd>{appointment.coverage.name}</dd></div>
+          )}
           {appointment.office && <div className="flex gap-2"><dt className="w-28 text-zinc-500">Consultorio</dt><dd>{appointment.office.name}</dd></div>}
           <div className="flex gap-2"><dt className="w-28 text-zinc-500">Paciente</dt><dd>{appointment.patient.firstName} {appointment.patient.lastName}</dd></div>
         </dl>

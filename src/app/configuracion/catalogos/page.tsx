@@ -29,10 +29,10 @@ export default async function CatalogsPage() {
               <li key={c.id} className="rounded-xl bg-zinc-50 p-3 dark:bg-zinc-900">
                 <ActionForm action={saveCoverage} className="flex flex-wrap items-end gap-3">
                   <input type="hidden" name="id" value={c.id} />
-                  <Field label="Nombre" htmlFor={`cn-${c.id}`}><TextInput id={`cn-${c.id}`} name="name" defaultValue={c.name} required className="w-44" /></Field>
+                  <Field label="Nombre" htmlFor={`cn-${c.id}`} hint={c.isOccupational ? "Turnos preocupacionales: no se renombra" : undefined}><TextInput id={`cn-${c.id}`} name="name" defaultValue={c.name} required readOnly={c.isOccupational} className="w-44" /></Field>
                   <Field label="Color" htmlFor={`cc-${c.id}`}><TextInput id={`cc-${c.id}`} name="color" type="color" defaultValue={c.color} className="h-10 w-16 p-1" /></Field>
                   <Field label="Orden" htmlFor={`co-${c.id}`}><TextInput id={`co-${c.id}`} name="sortOrder" type="number" min={0} defaultValue={c.sortOrder} className="w-20" /></Field>
-                  <Check name="isParticular" label="Es particular" defaultChecked={c.isParticular} />
+                  {!c.isOccupational && <Check name="isParticular" label="Es particular" defaultChecked={c.isParticular} />}
                   <Check name="active" label="Activa" defaultChecked={c.active} />
                 </ActionForm>
               </li>

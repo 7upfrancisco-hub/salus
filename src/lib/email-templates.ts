@@ -34,6 +34,8 @@ type AppointmentMail = Base & {
   patientName: string;
   professionalName: string;
   when: string;
+  /** Solo en turnos preocupacionales. */
+  studyName?: string;
   requirements: string[];
 };
 
@@ -42,8 +44,10 @@ function appointmentBody(data: AppointmentMail, intro: string) {
     ? `<p><strong>Acordate de traer:</strong></p><ul>${data.requirements.map((r) => `<li>${escape(r)}</li>`).join("")}</ul>`
     : "";
   return `<p>Hola ${escape(data.patientName)}, ${escape(intro)}</p>
-<p><strong>${escape(data.when)} hs</strong><br>${escape(data.professionalName)}</p>${reqs}`;
+<p><strong>${escape(data.when)} hs</strong><br>${escape(data.professionalName)}${data.studyName ? `<br>Estudio: ${escape(data.studyName)}` : ""}</p>${reqs}`;
 }
+
+const studyText = (data: AppointmentMail) => (data.studyName ? ` Estudio: ${data.studyName}.` : "");
 
 const reqsText = (reqs: string[]) => (reqs.length ? `\nAcordate de traer:\n${reqs.map((r) => `- ${r}`).join("\n")}\n` : "");
 
@@ -51,7 +55,7 @@ export function confirmationEmail(data: AppointmentMail) {
   return {
     subject: `Turno reservado · ${data.when}`,
     html: layout(data.centerName, "Tu turno está reservado", appointmentBody(data, "reservaste este turno:"), "Ver, confirmar o cancelar mi turno", data.manageUrl),
-    text: `Hola ${data.patientName}, reservaste un turno en ${data.centerName}:\n${data.when} hs con ${data.professionalName}.${reqsText(data.requirements)}\nVer, confirmar o cancelar: ${data.manageUrl}`,
+    text: `Hola ${data.patientName}, reservaste un turno en ${data.centerName}:\n${data.when} hs con ${data.professionalName}.${studyText(data)}${reqsText(data.requirements)}\nVer, confirmar o cancelar: ${data.manageUrl}`,
   };
 }
 
@@ -59,7 +63,7 @@ export function reminderEmail(data: AppointmentMail) {
   return {
     subject: `Recordatorio de turno · ${data.when}`,
     html: layout(data.centerName, "Te recordamos tu turno", appointmentBody(data, "te recordamos tu turno:"), "Confirmar o cancelar mi turno", data.manageUrl),
-    text: `Hola ${data.patientName}, te recordamos tu turno en ${data.centerName}:\n${data.when} hs con ${data.professionalName}.${reqsText(data.requirements)}\nConfirmar o cancelar: ${data.manageUrl}`,
+    text: `Hola ${data.patientName}, te recordamos tu turno en ${data.centerName}:\n${data.when} hs con ${data.professionalName}.${studyText(data)}${reqsText(data.requirements)}\nConfirmar o cancelar: ${data.manageUrl}`,
   };
 }
 

@@ -46,6 +46,8 @@ export type BookInput = {
   actor?: Actor | null;
   /** Solo para el personal: saltear reglas dejando el motivo. */
   override?: { reason: string } | null;
+  /** Obligatorio si la cobertura es la de preocupacional (y no se admite en las demás): estudio y empresa. */
+  occupational?: { studyId: string; company: string } | null;
 };
 
 class Abort extends Error {
@@ -77,6 +79,18 @@ export async function bookAppointment(input: BookInput): Promise<BookResult> {
   const coverage = await db.coverage.findUnique({ where: { id: coverageId } });
   if (!coverage || !coverage.active) {
     return { ok: false, code: "INVALID", message: "La cobertura elegida no está disponible." };
+  }
+
+  // Preocupacional: lleva estudio y empresa. Las demás coberturas no (así nadie los cuela por otro camino).
+  const occupational = input.occupational ?? null;
+  if (coverage.isOccupational) {
+    if (!occupational || occupational.company.trim().length < 2) {
+      return { ok: false, code: "INVALID", message: "Para un turno preocupacional elegí el estudio e ingresá la empresa que lo solicita." };
+    }
+    const study = await db.occupationalStudy.findUnique({ where: { id: occupational.studyId }, select: { active: true } });
+    if (!study?.active) return { ok: false, code: "INVALID", message: "El estudio elegido no está disponible." };
+  } else if (occupational) {
+    return { ok: false, code: "INVALID", message: "El estudio y la empresa son solo para turnos preocupacionales." };
   }
 
   try {
@@ -152,7 +166,7 @@ export async function bookAppointment(input: BookInput): Promise<BookResult> {
         }
       }
 
-      const patientResult = await upsertPatient(tx, input.patient, { coverageId, actorId: actor?.id });
+      const patientResult = await upsertPatient(tx, input.patient, { coverageId: coverage.isOccupational ? null : coverageId, actorId: actor?.id });
       if (!patientResult.ok) throw fail(patientResult.code, patientResult.message);
 
       // Quien consigue turno deja de esperar uno: si no, seguiría figurando en la lista (y podría
@@ -185,6 +199,8 @@ export async function bookAppointment(input: BookInput): Promise<BookResult> {
           isOverride: violations.length > 0,
           overrideReason,
           overrideRules: violations.length > 0 ? JSON.stringify(violations) : null,
+          studyId: occupational?.studyId ?? null,
+          company: occupational?.company.trim() ?? null,
           createdById: actor?.id ?? null,
         },
       });
@@ -197,7 +213,7 @@ export async function bookAppointment(input: BookInput): Promise<BookResult> {
           action: violations.length > 0 ? "APPOINTMENT_CREATED_OVERRIDE" : source === "STAFF" ? "APPOINTMENT_CREATED" : "APPOINTMENT_CREATED_ONLINE",
           entity: "Appointment",
           entityId: appointment.id,
-          details: { professionalId, coverageId, date, startMinutes, violations, overrideReason },
+          details: { professionalId, coverageId, date, startMinutes, violations, overrideReason, ...(occupational ? { studyId: occupational.studyId } : {}) },
         },
         tx,
       );

@@ -11,6 +11,7 @@ import {
   listProfessionalsFor,
   listSpecialtiesFor,
   searchAvailability,
+  searchOccupationalAvailability,
   type ProfessionalOption,
   type PublicAvailability,
   type SpecialtyOption,
@@ -73,6 +74,12 @@ export async function getAvailability(params: {
   return searchAvailability({ ...parsed.data, includeParticularAlternative: true });
 }
 
+/** Turnos libres del camino "Preocupacional" (los estudios comparten la agenda, así que no se filtra por estudio). */
+export async function getOccupationalAvailability(): Promise<PublicAvailability> {
+  if (!(await allowRequest("availability", 60, 60_000))) return EMPTY_AVAILABILITY;
+  return searchOccupationalAvailability();
+}
+
 // ───────────────────────── Reservar ─────────────────────────
 
 export type BookingState = {
@@ -92,6 +99,12 @@ const bookingSchema = z.object({
   consent: consentSchema,
 });
 
+/** Solo en el camino "Preocupacional": el formulario manda `occupational=1`, el estudio y la empresa. */
+const occupationalSchema = z.object({
+  studyId: idSchema,
+  company: z.string().trim().min(2, "Ingresá la empresa que solicita el estudio").max(80, "El nombre de la empresa es demasiado largo"),
+});
+
 export async function submitBooking(_prev: BookingState, formData: FormData): Promise<BookingState> {
   // Campo trampa: las personas no lo ven ni lo completan, los robots sí.
   if (formData.get("website")) return { error: "No se pudo completar la reserva." };
@@ -103,12 +116,15 @@ export async function submitBooking(_prev: BookingState, formData: FormData): Pr
 
   const patient = patientSchema.safeParse(raw);
   const booking = bookingSchema.safeParse(raw);
-  if (!patient.success || !booking.success) {
+  const isOccupational = raw.occupational === "1";
+  const occupational = isOccupational ? occupationalSchema.safeParse(raw) : null;
+  if (!patient.success || !booking.success || (occupational && !occupational.success)) {
     return {
       error: "Revisá los datos ingresados.",
       fieldErrors: {
         ...(booking.success ? {} : fieldErrors(booking.error)),
         ...(patient.success ? {} : fieldErrors(patient.error)),
+        ...(occupational && !occupational.success ? fieldErrors(occupational.error) : {}),
       },
       values,
     };
@@ -122,6 +138,7 @@ export async function submitBooking(_prev: BookingState, formData: FormData): Pr
     patient: patient.data,
     notes: booking.data.notes || null,
     source: "PUBLIC",
+    occupational: occupational?.success ? occupational.data : null,
   });
 
   if (!result.ok) {

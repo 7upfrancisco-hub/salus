@@ -101,6 +101,9 @@ const staffBookingSchema = z.object({
   startMinutes: z.coerce.number().int().min(0).max(1439),
   notes: z.string().trim().max(300).optional(),
   overrideReason: z.string().trim().max(300).optional(),
+  /** Solo si la cobertura es preocupacional (el formulario los muestra únicamente entonces). */
+  studyId: z.string().min(1).max(40).optional(),
+  company: z.string().trim().min(2, "Ingresá la empresa que solicita el estudio").max(80).optional(),
 });
 
 export async function createStaffAppointment(_prev: StaffBookingState, formData: FormData): Promise<StaffBookingState> {
@@ -129,6 +132,8 @@ export async function createStaffAppointment(_prev: StaffBookingState, formData:
     source: "STAFF",
     actor: actorOf(user),
     override: booking.data.overrideReason ? { reason: booking.data.overrideReason } : null,
+    occupational:
+      booking.data.studyId && booking.data.company ? { studyId: booking.data.studyId, company: booking.data.company } : null,
   });
 
   if (!result.ok) {

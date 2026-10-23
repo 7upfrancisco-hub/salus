@@ -25,10 +25,15 @@ export default async function NewStaffAppointmentPage({ searchParams }: PageProp
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isInteger(startMinutes)) redirect("/agenda");
   if (!(await canManageProfessional(user, professionalId))) redirect("/agenda");
 
-  const [context, professional, coverages] = await Promise.all([
+  const [context, professional, coverages, studies] = await Promise.all([
     loadEngineContext({ professionalId, from: date, to: date }),
     db.professional.findUniqueOrThrow({ where: { id: professionalId }, include: { specialty: true } }),
     db.coverage.findMany({ where: { active: true }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }] }),
+    db.occupationalStudy.findMany({
+      where: { active: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      select: { id: true, name: true },
+    }),
   ]);
 
   const options: CoverageOption[] = [];
@@ -42,6 +47,7 @@ export default async function NewStaffAppointmentPage({ searchParams }: PageProp
         name: coverage.name,
         color: coverage.color,
         isParticular: coverage.isParticular,
+        isOccupational: coverage.isOccupational,
         problems: (slot?.violations ?? []).map((v) => ({
           label: SLOT_STATUS_LABEL[v],
           overridable: OVERRIDABLE_STATUSES.includes(v),
@@ -75,6 +81,7 @@ export default async function NewStaffAppointmentPage({ searchParams }: PageProp
           date={date}
           startMinutes={startMinutes}
           coverages={options}
+          studies={studies}
           preselectedCoverageId={options.some((o) => o.id === preselected) ? preselected : undefined}
         />
       )}

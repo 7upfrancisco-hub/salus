@@ -7,7 +7,8 @@
  *
  * Crea turnos de prueba con DNI que empiezan con 9100 y los borra al terminar.
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { PDFDocument } from "pdf-lib";
 import { chromium, type Page } from "playwright-core";
 import { db } from "../src/lib/db";
 import { addDaysToDate, todayInZone, weekdayOf, zonedTimeToUtc } from "../src/lib/time";
@@ -34,9 +35,16 @@ const today = todayInZone(settings.timezone);
 let monday = addDaysToDate(today, 4);
 while (weekdayOf(monday) !== 1) monday = addDaysToDate(monday, 1);
 
+let tuesday = addDaysToDate(today, 4);
+while (weekdayOf(tuesday) !== 2) tuesday = addDaysToDate(tuesday, 1);
+
 const perez = await db.professional.findFirstOrThrow({ where: { name: "Dr. Pérez" } });
+const medina = await db.professional.findFirstOrThrow({ where: { name: "Dra. Medina" } });
 const ruiz = await db.professional.findFirstOrThrow({ where: { name: "Dr. Ruiz" } });
 const pamiRule = await db.coverageRule.findFirstOrThrow({ where: { professionalId: perez.id, coverage: { name: "PAMI" } } });
+
+// El límite de pedidos se guarda en la base: sin esto, corridas seguidas se bloquean entre sí (8 reservas por 10 minutos).
+await db.rateLimitHit.deleteMany();
 
 const browser = await chromium.launch({ executablePath, headless: true });
 
@@ -46,6 +54,20 @@ async function login(page: Page, email: string, password: string) {
   await page.getByLabel("Contraseña").fill(password);
   await page.getByRole("button", { name: "Ingresar" }).click();
   await page.waitForURL("**/agenda**");
+}
+
+/** Entra al turnero y elige el camino "Personal" (la primera pregunta es personal o preocupacional). */
+async function openPersonal(page: Page) {
+  await page.goto(BASE);
+  await page.getByRole("button", { name: /^Personal/ }).click();
+}
+
+/** Descarga un PDF con un clic y devuelve su nombre y cuántas páginas tiene. */
+async function downloadPdf(page: Page, linkName: string) {
+  const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("link", { name: linkName }).click()]);
+  const bytes = readFileSync((await download.path())!);
+  const valid = new TextDecoder().decode(bytes.subarray(0, 5)) === "%PDF-";
+  return { filename: download.suggestedFilename(), valid, pages: valid ? (await PDFDocument.load(bytes)).getPageCount() : 0 };
 }
 
 async function fillPatient(page: Page, n: number, extra: { birthDate?: string } = {}) {
@@ -66,15 +88,24 @@ try {
     const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage(); // celular
     page.setDefaultTimeout(30_000);
     await page.goto(BASE);
+    ok(
+      "la entrada pregunta si el turno es personal o preocupacional",
+      (await page.getByRole("button", { name: /^Personal/ }).count()) === 1 && (await page.getByRole("button", { name: /^Preocupacional/ }).count()) === 1,
+    );
+    ok("hasta elegir el tipo de turno no muestra coberturas", (await page.getByRole("button", { name: "PAMI" }).count()) === 0);
+    await page.getByRole("button", { name: /^Personal/ }).click();
     ok("la página pública muestra las coberturas", (await page.getByRole("button", { name: "PAMI" }).count()) > 0);
+    ok("la cobertura Preocupacional no aparece entre las coberturas", (await page.getByRole("button", { name: "Preocupacional", exact: true }).count()) === 0);
 
     await page.getByRole("button", { name: "PAMI" }).click();
     await page.getByRole("button", { name: "Traumatología" }).click();
     ok("ofrece especialidades de PAMI, no las que no atienden PAMI", (await page.getByRole("button", { name: "Pediatría" }).count()) === 0);
 
     await page.getByRole("button", { name: /Dr\. Pérez/ }).click();
+    ok("al elegir el médico todavía no muestra la agenda", (await page.getByText("Próximo turno disponible").count()) === 0);
+    await page.getByRole("button", { name: "Buscar turno" }).click();
     await page.getByText("Próximo turno disponible").waitFor();
-    ok("muestra el próximo turno disponible", true);
+    ok("con «Buscar turno» muestra el próximo turno disponible", true);
 
     // Se elige el lunes a propósito: las verificaciones de secretaría de más abajo miran ese día
     // (el primer día con lugar cambia según cuándo se corra la prueba).
@@ -112,7 +143,7 @@ try {
   {
     const page = await (await browser.newContext()).newPage();
     page.setDefaultTimeout(30_000);
-    await page.goto(BASE);
+    await openPersonal(page);
     await page.getByRole("button", { name: "OSDE" }).click();
     await page.getByRole("button", { name: "Pediatría" }).click();
     ok("pide la fecha de nacimiento si la especialidad tiene límite de edad", (await page.getByLabel("Fecha de nacimiento del paciente").count()) === 1);
@@ -124,12 +155,50 @@ try {
     await page.getByLabel("Fecha de nacimiento del paciente").blur();
     await page.getByRole("button", { name: /Primero disponible/ }).waitFor();
     ok("con la edad correcta ofrece profesionales", true);
-    await page.goto(BASE);
+    await openPersonal(page);
     await page.getByRole("button", { name: "OSDE" }).click();
     await page.getByRole("button", { name: "Traumatología" }).click();
     await page.getByRole("button", { name: /Dr\. Pérez/ }).click();
+    await page.getByRole("button", { name: "Buscar turno" }).click();
     await page.getByText("¿Ya te atendiste antes con este profesional?").waitFor();
     ok("con OSDE y el Dr. Pérez pregunta si es primera vez o control (duran distinto)", true);
+    await page.context().close();
+  }
+
+  console.log("\nPaciente: preocupacional");
+  {
+    const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+    page.setDefaultTimeout(30_000);
+    await page.goto(BASE);
+    await page.getByRole("button", { name: /^Preocupacional/ }).click();
+    ok("no pide obra social ni especialidad", (await page.getByText("¿Con qué cobertura te atendés?").count()) === 0 && (await page.getByText("¿Qué especialidad necesitás?").count()) === 0);
+    const studies = ["Examen preocupacional básico", "Examen con laboratorio", "Examen con estudios complementarios"];
+    const shown = await Promise.all(studies.map((name) => page.getByRole("button", { name: new RegExp(name) }).count()));
+    ok("ofrece los 3 estudios para elegir", shown.every((n) => n === 1), JSON.stringify(shown));
+
+    await page.getByRole("button", { name: /Examen con laboratorio/ }).click();
+    await page.getByText("Elegí día y horario").waitFor();
+    await page.getByText("Próximo turno disponible").waitFor();
+    ok("al elegir el estudio pasa directo a la agenda con turnos disponibles", true);
+    await page.getByText("Próximo turno disponible").click();
+
+    await page.getByText("Para este turno tenés que traer:").waitFor();
+    ok("muestra las indicaciones del estudio elegido", (await page.getByText("Venir con 8 horas de ayuno").count()) > 0);
+    ok("en preocupacional no pide número de afiliado y sí la empresa", (await page.getByLabel("Número de afiliado").count()) === 0 && (await page.getByLabel("Empresa que solicita el estudio").count()) === 1);
+
+    await fillPatient(page, 20);
+    await page.getByLabel("Empresa que solicita el estudio").fill("Constructora E2E SA");
+    await page.getByRole("checkbox").check();
+    await page.getByRole("button", { name: "Confirmar turno" }).click();
+    await page.waitForURL("**/turno/**");
+    ok("reserva el turno preocupacional", true);
+    ok(
+      "la página del turno muestra el tipo, el estudio y la empresa",
+      (await page.getByText("Preocupacional", { exact: true }).count()) > 0 &&
+        (await page.getByText("Examen con laboratorio").count()) > 0 &&
+        (await page.getByText("Constructora E2E SA").count()) > 0,
+    );
+    ok("y repite las indicaciones del estudio", (await page.getByText("Venir con 8 horas de ayuno").count()) > 0);
     await page.context().close();
   }
 
@@ -203,6 +272,28 @@ try {
     await page.context().close();
   }
 
+  console.log("\nSecretaría: descargar la agenda del día");
+  {
+    const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
+    page.setDefaultTimeout(30_000);
+    await login(page, "secretaria@salus.local", "secretaria1234");
+    await page.goto(`${BASE}/agenda?profesional=${perez.id}&fecha=${monday}`);
+    await page.getByRole("heading", { name: "Dr. Pérez" }).waitFor();
+
+    const doctor = await downloadPdf(page, "Descargar agenda del día (PDF)");
+    ok("descarga la agenda del médico en PDF", doctor.valid && doctor.filename === `agenda-${monday}-dr-perez.pdf`, JSON.stringify(doctor));
+    const occupational = await downloadPdf(page, "Descargar preocupacionales del día (PDF)");
+    ok("descarga la agenda de preocupacionales en PDF", occupational.valid && occupational.filename === `preocupacionales-${monday}.pdf`, JSON.stringify(occupational));
+    ok("cada descarga queda en el registro de actividad", (await db.auditLog.count({ where: { action: "AGENDA_DOWNLOADED", createdAt: { gte: startedAt } } })) >= 2);
+
+    const request = page.context().request;
+    ok("no deja descargar la agenda de un profesional no asignado", (await request.get(`${BASE}/agenda/descargar?profesional=${ruiz.id}&fecha=${monday}`)).status() === 403);
+    ok("rechaza una fecha inválida", (await request.get(`${BASE}/agenda/descargar?profesional=${perez.id}&fecha=2026-02-31`)).status() === 400);
+    const anonymous = await (await browser.newContext()).request.get(`${BASE}/agenda/descargar?profesional=${perez.id}&fecha=${monday}`);
+    ok("sin iniciar sesión no entrega nada", anonymous.status() === 401);
+    await page.context().close();
+  }
+
   console.log("\nProfesional");
   {
     const page = await (await browser.newContext()).newPage();
@@ -269,7 +360,7 @@ try {
     const e2eRule = await db.coverageRule.findFirstOrThrow({ where: { professionalId: perez.id, coverageId: coverage.id } });
     ok("la regla queda guardada en la base", !!e2eRule);
 
-    await page.goto(BASE);
+    await openPersonal(page);
     await page.getByRole("button", { name: "Obra Social E2E" }).click();
     await page.getByRole("button", { name: "Traumatología" }).waitFor();
     ok("la nueva cobertura aparece enseguida en el turnero del paciente", true);
@@ -295,6 +386,56 @@ try {
     // Registro de actividad
     await page.goto(`${BASE}/configuracion/auditoria`);
     ok("el registro de actividad muestra los overrides", (await page.getByText("Turno con override").count()) > 0);
+    await page.context().close();
+  }
+
+  console.log("\nAdministración: preocupacional");
+  {
+    const page = await (await browser.newContext({ viewport: { width: 1280, height: 1000 } })).newPage();
+    page.setDefaultTimeout(30_000);
+    await login(page, "admin@salus.local", "admin1234");
+
+    await page.goto(`${BASE}/configuracion/catalogos`);
+    ok("la cobertura Preocupacional no se puede renombrar", (await page.locator('input[name="name"][value="Preocupacional"]').getAttribute("readonly")) !== null);
+
+    await page.goto(`${BASE}/configuracion/estudios`);
+    await page.getByRole("heading", { name: "Estudios preocupacionales" }).waitFor();
+    ok("lista los estudios cargados", (await page.getByText("Examen con laboratorio").count()) === 0 && (await page.locator('input[value="Examen con laboratorio"]').count()) === 1);
+    await page.locator("#new-stn").fill("Estudio E2E");
+    await page.locator("#std-new").fill("Descripción de prueba");
+    await page.locator("#sti-new").fill("Traer el DNI\nTraer anteojos");
+    await page.locator("form", { has: page.locator("#new-stn") }).getByRole("button", { name: "Agregar" }).click();
+    await page.getByText("Guardado ✓").first().waitFor();
+    const created = await db.occupationalStudy.findFirstOrThrow({ where: { name: "Estudio E2E" } });
+    ok("se puede agregar un estudio desde la pantalla", created.instructions === "Traer el DNI\nTraer anteojos" && created.active);
+    await page.goto(BASE);
+    await page.getByRole("button", { name: /^Preocupacional/ }).click();
+    ok("el estudio nuevo aparece enseguida en el turnero", (await page.getByRole("button", { name: /Estudio E2E/ }).count()) === 1);
+    await db.occupationalStudy.update({ where: { id: created.id }, data: { active: false } });
+    await page.goto(BASE);
+    await page.getByRole("button", { name: /^Preocupacional/ }).click();
+    ok("un estudio desactivado deja de ofrecerse", (await page.getByRole("button", { name: /Estudio E2E/ }).count()) === 0);
+
+    // Secretaría/administración da un turno preocupacional desde la agenda de la profesional.
+    await page.goto(`${BASE}/agenda?profesional=${medina.id}&fecha=${tuesday}`);
+    await page.getByRole("heading", { name: "Dra. Medina" }).waitFor();
+    await page.getByRole("link", { name: "Preocupacional", exact: true }).first().click();
+    await page.getByRole("heading", { name: "Dar turno" }).waitFor();
+    ok("al elegir Preocupacional pide estudio y empresa, y no el número de afiliado", (await page.locator("#studyId").count()) === 1 && (await page.locator("#company").count()) === 1 && (await page.getByLabel("Número de afiliado").count()) === 0);
+    const submit = page.getByRole("button", { name: "Dar turno", exact: true });
+    ok("no se puede enviar sin elegir el estudio", await submit.isDisabled());
+    await page.locator("#studyId").selectOption({ label: "Examen preocupacional básico" });
+    await page.locator("#company").fill("Transportes E2E SRL");
+    await fillPatient(page, 21);
+    await submit.click();
+    await page.waitForURL("**/agenda?**");
+    const booked = await db.appointment.findFirstOrThrow({ where: { patient: { dni: "91000021" } }, include: { study: true } });
+    ok("el turno queda con el estudio y la empresa", booked.study?.name === "Examen preocupacional básico" && booked.company === "Transportes E2E SRL" && booked.source === "STAFF");
+    await page.getByText(/Navegador21/).first().click();
+    ok("la agenda muestra el estudio y la empresa del turno", (await page.getByText("Transportes E2E SRL").count()) > 0 && (await page.getByText("Examen preocupacional básico").count()) > 0);
+
+    const occupational = await downloadPdf(page, "Descargar preocupacionales del día (PDF)");
+    ok("la agenda de preocupacionales del día se descarga en PDF", occupational.valid && occupational.filename === `preocupacionales-${tuesday}.pdf`, JSON.stringify(occupational));
     await page.context().close();
   }
 
@@ -370,10 +511,11 @@ try {
 
     const page = await (await browser.newContext({ viewport: { width: 390, height: 900 } })).newPage();
     page.setDefaultTimeout(30_000);
-    await page.goto(BASE);
+    await openPersonal(page);
     await page.getByRole("button", { name: "PAMI" }).click();
     await page.getByRole("button", { name: "Traumatología" }).click();
     await page.getByRole("button", { name: /Dr\. Pérez/ }).click();
+    await page.getByRole("button", { name: "Buscar turno" }).click();
     await page.getByText(/No hay turnos disponibles con PAMI/).waitFor();
     ok("sin turnos con PAMI lo avisa", true);
     ok("ofrece pasar a atención particular", (await page.getByText("Ver turnos de atención particular").count()) === 1);
@@ -383,10 +525,11 @@ try {
     await page.getByText("Próximo turno disponible").waitFor();
     ok("al aceptar muestra los turnos particulares", true);
 
-    await page.goto(BASE);
+    await openPersonal(page);
     await page.getByRole("button", { name: "PAMI" }).click();
     await page.getByRole("button", { name: "Traumatología" }).click();
     await page.getByRole("button", { name: /Dr\. Pérez/ }).click();
+    await page.getByRole("button", { name: "Buscar turno" }).click();
     await page.getByText("Anotarme en la lista de espera").click();
     await fillPatient(page, 5);
     await page.getByRole("checkbox").check();
@@ -433,6 +576,7 @@ try {
   }
 } finally {
   await browser.close();
+  await db.rateLimitHit.deleteMany();
   const ids = (await db.patient.findMany({ where: { dni: { startsWith: "9100" } }, select: { id: true } })).map((p) => p.id);
   await db.waitlistEntry.deleteMany({ where: { patientId: { in: ids } } });
   await db.notificationLog.deleteMany({ where: { OR: [{ appointment: { patientId: { in: ids } } }, { waitlistEntry: { patientId: { in: ids } } }] } });
@@ -441,8 +585,9 @@ try {
   await db.userProfessionalAccess.deleteMany({ where: { user: { email: "e2e.secretaria@example.com" } } });
   await db.user.deleteMany({ where: { email: "e2e.secretaria@example.com" } });
   await db.appointment.deleteMany({ where: { patientId: { in: ids } } });
+  await db.occupationalStudy.deleteMany({ where: { name: "Estudio E2E" } });
   await db.patient.deleteMany({ where: { id: { in: ids } } });
-  await db.auditLog.deleteMany({ where: { createdAt: { gte: startedAt }, OR: [{ entity: { in: ["Appointment", "Patient", "WaitlistEntry", "ScheduleException", "CoverageRule", "Coverage", "Professional"] } }, { action: { in: ["USER_CREATED", "LOGIN", "LOGIN_FAILED"] } }] } });
+  await db.auditLog.deleteMany({ where: { createdAt: { gte: startedAt }, OR: [{ entity: { in: ["Appointment", "Patient", "WaitlistEntry", "ScheduleException", "CoverageRule", "Coverage", "Professional", "OccupationalStudy", "Agenda"] } }, { action: { in: ["USER_CREATED", "LOGIN", "LOGIN_FAILED"] } }] } });
   await db.$disconnect();
 }
 

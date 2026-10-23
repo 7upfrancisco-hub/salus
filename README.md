@@ -38,6 +38,25 @@ datos reales; ver `SEED_DEMO` más abajo). Salen del seed: `admin@salus.local` /
 - `src/app/` — `/` turnero del paciente · `/turno/[token]` su turno · `/agenda` secretaría · `/configuracion` reglas y administración.
 - `prisma/schema.prisma` — el modelo de datos (comentado).
 
+## Turnos personales y preocupacionales
+
+Lo primero que ve el paciente es `¿Qué tipo de turno necesitás?`:
+
+- **Personal**: cobertura → especialidad → médico → **Buscar turno** → día y horario → datos.
+- **Preocupacional**: estudio (3 opciones, editables) → día y horario → datos, con la **empresa** que solicita el estudio y sin obra social.
+
+Cómo se configura el preocupacional (todo desde la interfaz):
+
+1. **Configuración → Estudios preocupacionales**: nombre, descripción corta e indicaciones (qué traer, una por línea) de cada estudio. Se desactivan, no se borran. Todos los estudios comparten la misma agenda.
+2. **Configuración → Reglas por cobertura**: a cada profesional que atienda preocupacionales se le crea una regla con la cobertura **«Preocupacional»** (franjas horarias, cupos y requisitos), igual que con una obra social.
+3. La cobertura «Preocupacional» la crea una migración y no se puede renombrar; no aparece entre las coberturas del camino personal. Mientras no haya un estudio activo y un profesional con regla, el turnero avisa que no hay turnos preocupacionales online.
+
+Secretaría también puede dar turnos preocupacionales desde la agenda (elige estudio y empresa).
+
+## Descargar la agenda del día
+
+En **Agenda del día** hay dos botones: *Descargar agenda del día (PDF)* (el médico elegido, con todas sus coberturas) y *Descargar preocupacionales del día (PDF)* (solo los profesionales que el usuario puede ver). Los turnos cancelados no figuran. Como el archivo trae datos de salud, cada descarga queda en el registro de actividad (`AGENDA_DOWNLOADED`) y solo la puede bajar el personal con acceso a esa agenda.
+
 ## Reglas de negocio acordadas
 
 - La semana va de lunes a domingo; el mes es de calendario.

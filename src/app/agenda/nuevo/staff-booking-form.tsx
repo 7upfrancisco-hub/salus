@@ -9,6 +9,8 @@ export type CoverageOption = {
   name: string;
   color: string;
   isParticular: boolean;
+  /** Preocupacional: el turno lleva estudio y empresa en vez de obra social. */
+  isOccupational: boolean;
   /** Reglas que este horario incumple para esa cobertura (vacío = disponible). */
   problems: { label: string; overridable: boolean }[];
 };
@@ -31,18 +33,22 @@ export function StaffBookingForm({
   date,
   startMinutes,
   coverages,
+  studies,
   preselectedCoverageId,
 }: {
   professionalId: string;
   date: string;
   startMinutes: number;
   coverages: CoverageOption[];
+  /** Estudios activos, para los turnos preocupacionales. */
+  studies: { id: string; name: string }[];
   preselectedCoverageId?: string;
 }) {
   const [state, action, pending] = useActionState(createStaffAppointment, initialState);
   const [coverageId, setCoverageId] = useState(preselectedCoverageId ?? "");
   const [fields, setFields] = useState<Fields>(emptyFields);
   const [overrideReason, setOverrideReason] = useState("");
+  const [studyId, setStudyId] = useState("");
   const [lookup, setLookup] = useState<"idle" | "found" | "new">("idle");
   const [searching, startSearch] = useTransition();
   const errors = state.fieldErrors ?? {};
@@ -166,8 +172,34 @@ export function StaffBookingForm({
           {textField("birthDate", "Fecha de nacimiento", { type: "date", max: new Date().toISOString().slice(0, 10) })}
           {textField("phone", "Teléfono", { type: "tel" })}
           {textField("email", "Email", { type: "email" })}
-          {!selected?.isParticular && textField("affiliateNumber", "Número de afiliado", { required: false })}
+          {!selected?.isParticular && !selected?.isOccupational && textField("affiliateNumber", "Número de afiliado", { required: false })}
         </div>
+        {selected?.isOccupational && (
+          <div className="grid gap-4 rounded-xl bg-purple-50 p-4 sm:grid-cols-2 dark:bg-purple-950">
+            <div>
+              <label htmlFor="studyId" className="mb-1 block text-sm font-medium">
+                Estudio
+              </label>
+              <select id="studyId" name="studyId" value={studyId} onChange={(e) => setStudyId(e.target.value)} required className={inputClass}>
+                <option value="">Elegí el estudio…</option>
+                {studies.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+              {errors.studyId && <p className="mt-1 text-xs text-red-600">{errors.studyId}</p>}
+              {studies.length === 0 && <p className="mt-1 text-xs text-amber-800">No hay estudios cargados: se agregan en Configuración → Estudios preocupacionales.</p>}
+            </div>
+            <div>
+              <label htmlFor="company" className="mb-1 block text-sm font-medium">
+                Empresa que solicita el estudio
+              </label>
+              <input id="company" name="company" required minLength={2} maxLength={80} autoComplete="off" className={inputClass} />
+              {errors.company && <p className="mt-1 text-xs text-red-600">{errors.company}</p>}
+            </div>
+          </div>
+        )}
         <div>
           <label htmlFor="notes" className="mb-1 block text-sm font-medium">
             Comentarios <span className="font-normal text-zinc-500">(opcional)</span>
@@ -184,7 +216,7 @@ export function StaffBookingForm({
 
       <button
         type="submit"
-        disabled={pending || !coverageId || blocking.length > 0 || (needsOverride && overrideReason.trim().length < 5)}
+        disabled={pending || !coverageId || blocking.length > 0 || (!!selected?.isOccupational && !studyId) || (needsOverride && overrideReason.trim().length < 5)}
         className={primaryButtonClass}
       >
         {pending ? "Guardando…" : needsOverride ? "Dar turno con override" : "Dar turno"}

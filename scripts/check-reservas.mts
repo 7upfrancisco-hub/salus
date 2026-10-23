@@ -8,7 +8,10 @@ import { db } from "../src/lib/db";
 import { bookAppointment, cancelAppointment, setAppointmentStatus, type BookInput } from "../src/lib/booking";
 import { turnosDisponibles } from "../src/lib/engine/engine";
 import { loadEngineContext } from "../src/lib/engine/load";
+import { buildAgendaPdf } from "../src/lib/agenda-pdf";
+import { doctorDayAgenda, occupationalDayAgenda } from "../src/lib/agenda-export";
 import { processPendingNotifications } from "../src/lib/notify";
+import { getOccupationalOffer, listCoverages, searchOccupationalAvailability } from "../src/lib/public";
 import { addDaysToDate, todayInZone, weekdayOf } from "../src/lib/time";
 
 let failures = 0;
@@ -38,6 +41,8 @@ const pami = await db.coverage.findFirstOrThrow({ where: { name: "PAMI" } });
 const osde = await db.coverage.findFirstOrThrow({ where: { name: "OSDE" } });
 const secretary = await db.user.findUniqueOrThrow({ where: { email: "secretaria@salus.local" } });
 const actor = { id: secretary.id, role: secretary.role, manageAll: secretary.manageAll };
+const admin = await db.user.findFirstOrThrow({ where: { role: "ADMIN" } });
+const adminActor = { id: admin.id, role: admin.role, manageAll: admin.manageAll };
 
 let n = 0;
 const patient = (extra: Partial<BookInput["patient"]> = {}): BookInput["patient"] => ({
@@ -198,6 +203,69 @@ try {
     check("reservado → confirmado", confirmed.ok);
   }
 
+  console.log("\nPreocupacional");
+  const medina = await db.professional.findFirstOrThrow({ where: { name: "Dra. Medina" } });
+  const occupationalCoverage = await db.coverage.findFirstOrThrow({ where: { isOccupational: true } });
+  const study = await db.occupationalStudy.findFirstOrThrow({ where: { active: true }, orderBy: { sortOrder: "asc" } });
+  const COMPANY = "Empresa de Prueba SA";
+  const bookOccupational = (extra: Partial<BookInput> = {}) =>
+    bookAppointment({
+      professionalId: medina.id,
+      coverageId: occupationalCoverage.id,
+      date: TUE,
+      startMinutes: 8 * 60,
+      patient: patient(),
+      source: "PUBLIC",
+      occupational: { studyId: study.id, company: COMPANY },
+      ...extra,
+    });
+
+  const offer = await getOccupationalOffer();
+  check("el turnero ofrece preocupacional con sus estudios activos", !!offer && offer.coverageId === occupationalCoverage.id && offer.studies.length >= 3, JSON.stringify(offer));
+  check("la cobertura Preocupacional no aparece entre las coberturas del camino personal", !(await listCoverages()).some((c) => c.id === occupationalCoverage.id));
+  const occupationalDays = await searchOccupationalAvailability();
+  check(
+    "ofrece los horarios de la profesional que atiende preocupacionales (martes y jueves)",
+    occupationalDays.days.length > 0 && occupationalDays.days.every((d) => [2, 4].includes(weekdayOf(d.date))) && occupationalDays.days[0].slots[0].professionalId === medina.id,
+  );
+  check("en preocupacional no se pregunta si es primera consulta o control", occupationalDays.askVisitType === false && occupationalDays.particularAlternative === null);
+
+  const occupational = await bookOccupational();
+  check("reserva un turno preocupacional", occupational.ok, JSON.stringify(occupational));
+  if (occupational.ok) {
+    const row = await db.appointment.findUniqueOrThrow({ where: { id: occupational.appointment.id }, include: { patient: true } });
+    check("guarda el estudio y la empresa", row.studyId === study.id && row.company === COMPANY);
+    check("la cobertura habitual del paciente no pasa a ser «Preocupacional»", row.patient.coverageId === null);
+    check("encola la confirmación del turno preocupacional", (await db.notificationLog.count({ where: { appointmentId: row.id, kind: "CONFIRMATION" } })) === 1);
+  }
+
+  const taken = await bookOccupational();
+  check("no deja reservar dos preocupacionales en el mismo horario", !taken.ok && taken.code === "SLOT_UNAVAILABLE", JSON.stringify(taken));
+  const noStudy = await bookOccupational({ startMinutes: 8 * 60 + 20, occupational: null });
+  check("exige estudio y empresa", !noStudy.ok && noStudy.code === "INVALID", JSON.stringify(noStudy));
+  const noCompany = await bookOccupational({ startMinutes: 8 * 60 + 20, occupational: { studyId: study.id, company: " " } });
+  check("la empresa no puede quedar vacía", !noCompany.ok && noCompany.code === "INVALID", JSON.stringify(noCompany));
+  const inactiveStudy = await db.occupationalStudy.create({ data: { name: "Estudio inactivo de prueba", active: false } });
+  const withInactive = await bookOccupational({ startMinutes: 8 * 60 + 20, occupational: { studyId: inactiveStudy.id, company: COMPANY } });
+  check("no acepta un estudio desactivado", !withInactive.ok && withInactive.code === "INVALID", JSON.stringify(withInactive));
+  const onPersonal = await book({ startMinutes: 10 * 60 + 40, override: { reason: "no importa" }, source: "STAFF", actor, occupational: { studyId: study.id, company: COMPANY } });
+  check("estudio y empresa no se aceptan en un turno de obra social", !onPersonal.ok && onPersonal.code === "INVALID", JSON.stringify(onPersonal));
+
+  console.log("\nAgenda del día en PDF");
+  const occupationalAgenda = await occupationalDayAgenda({ professionalIds: [medina.id], date: TUE, generatedBy: "Prueba" });
+  check("la agenda de preocupacionales trae el turno con empresa y estudio", occupationalAgenda.count === 1 && occupationalAgenda.pdf.rows[0].includes(COMPANY) && occupationalAgenda.pdf.rows[0].includes(study.name));
+  const noAccess = await occupationalDayAgenda({ professionalIds: [perez.id], date: TUE, generatedBy: "Prueba" });
+  check("solo incluye a los profesionales que el usuario puede ver", noAccess.count === 0);
+  const doctorAgenda = await doctorDayAgenda({ professionalId: medina.id, date: TUE, generatedBy: "Prueba" });
+  check("la agenda del médico incluye sus turnos del día", doctorAgenda.count >= 1 && doctorAgenda.pdf.rows.some((r) => r[4].includes("Preocupacional")));
+  const perezAgenda = await doctorDayAgenda({ professionalId: perez.id, date: MON, generatedBy: "Prueba" });
+  check("la agenda de otro médico trae solo los suyos", perezAgenda.count >= 2 && perezAgenda.pdf.rows.every((r) => !r[4].includes("Preocupacional")));
+  const pdfBytes = await buildAgendaPdf(perezAgenda.pdf);
+  check("arma un PDF válido", new TextDecoder().decode(pdfBytes.slice(0, 5)) === "%PDF-" && pdfBytes.length > 1000);
+  const cancelledOcc = occupational.ok ? await cancelAppointment({ appointmentId: occupational.appointment.id, by: "STAFF", actor: adminActor, reason: "prueba" }) : null;
+  const afterCancel = await occupationalDayAgenda({ professionalIds: [medina.id], date: TUE, generatedBy: "Prueba" });
+  check("un turno cancelado no figura en la agenda descargada", !!cancelledOcc?.ok && afterCancel.count === 0);
+
   console.log("\nMails (sin RESEND_API_KEY no se envía nada)");
   const result = await processPendingNotifications();
   check("procesa la cola sin errores y sin mandar mails reales", result.sent === 0 && result.failed === 0, JSON.stringify(result));
@@ -238,6 +306,7 @@ try {
   await db.notificationLog.deleteMany({ where: { OR: [{ appointment: { patientId: { in: ids } } }, { waitlistEntry: { patientId: { in: ids } } }] } });
   await db.waitlistEntry.deleteMany({ where: { patientId: { in: ids } } });
   await db.appointment.deleteMany({ where: { patientId: { in: ids } } });
+  await db.occupationalStudy.deleteMany({ where: { name: "Estudio inactivo de prueba" } });
   await db.patient.deleteMany({ where: { id: { in: ids } } });
   await db.auditLog.deleteMany({ where: { createdAt: { gte: startedAt }, entity: { in: ["Appointment", "Patient"] } } });
   await db.$disconnect();

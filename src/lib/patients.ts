@@ -20,7 +20,7 @@ export type PatientResult =
 export async function upsertPatient(
   tx: Tx,
   data: PatientInput,
-  options: { coverageId: string; actorId?: string | null },
+  options: { coverageId: string | null; actorId?: string | null },
 ): Promise<PatientResult> {
   const existing = await tx.patient.findUnique({ where: { dni: data.dni } });
 

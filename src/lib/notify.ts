@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { cancellationEmail, confirmationEmail, formatWhen, reminderEmail, waitlistEmail } from "@/lib/email-templates";
 import { isMailConfigured, sendEmail } from "@/lib/mail";
 import { getRequirements } from "@/lib/requirements";
+import { mergeRequirements, studyInstructionLines } from "@/lib/studies";
 
 type Tx = Pick<typeof db, "notificationLog" | "waitlistEntry">;
 
@@ -129,7 +130,7 @@ export async function processPendingNotifications(limit = 50) {
     const log = await db.notificationLog.findUniqueOrThrow({
       where: { id },
       include: {
-        appointment: { include: { patient: true, professional: true } },
+        appointment: { include: { patient: true, professional: true, study: true } },
         waitlistEntry: { include: { patient: true, specialty: true } },
       },
     });
@@ -165,7 +166,10 @@ export async function processPendingNotifications(limit = 50) {
         patientName: appt.patient.firstName,
         professionalName: appt.professional.name,
         when: formatWhen(appt.startsAt, timezone),
-        requirements: isCancellationMail ? [] : await getRequirements(appt.professionalId, appt.coverageId),
+        studyName: appt.study?.name,
+        requirements: isCancellationMail
+          ? []
+          : mergeRequirements(await getRequirements(appt.professionalId, appt.coverageId), studyInstructionLines(appt.study?.instructions)),
       };
       mail =
         log.kind === NOTIFICATION_KIND.REMINDER

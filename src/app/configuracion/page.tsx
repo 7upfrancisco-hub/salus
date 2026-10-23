@@ -15,6 +15,7 @@ const AGENDA_ITEMS = [
 const ADMIN_ITEMS = [
   { href: "/configuracion/profesionales", title: "Profesionales", text: "Alta y baja de profesionales y su especialidad." },
   { href: "/configuracion/catalogos", title: "Coberturas, especialidades y consultorios", text: "Obras sociales y prepagas, rangos de edad por especialidad y consultorios." },
+  { href: "/configuracion/estudios", title: "Estudios preocupacionales", text: "Los estudios que el paciente elige en un turno preocupacional y qué tiene que traer para cada uno." },
   { href: "/configuracion/usuarios", title: "Usuarios", text: "Personal de secretaría y profesionales con acceso al sistema, y qué agendas gestiona cada una." },
   { href: "/configuracion/centro", title: "Datos del centro", text: "Nombre, anticipación mínima, plazo de reserva, cancelaciones y recordatorios." },
   { href: "/configuracion/auditoria", title: "Registro de actividad", text: "Quién hizo qué: turnos, cancelaciones, overrides y cambios de reglas." },

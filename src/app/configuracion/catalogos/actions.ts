@@ -34,6 +34,14 @@ export async function saveCoverage(_prev: FormState, formData: FormData): Promis
   if (!parsed.success) return failed(summarize(fieldErrors(parsed.error)));
   const { id, ...data } = parsed.data;
 
+  // «Preocupacional» es la cobertura de los turnos preocupacionales: el sistema la reconoce por su marca,
+  // así que no se renombra ni se la hace pasar por atención particular (solo color, orden y si está activa).
+  const existing = id ? await db.coverage.findUnique({ where: { id }, select: { isOccupational: true, name: true } }) : null;
+  if (existing?.isOccupational) {
+    data.name = existing.name;
+    data.isParticular = false;
+  }
+
   const sameName = await db.coverage.findFirst({ where: { name: data.name, ...(id ? { NOT: { id } } : {}) }, select: { id: true } });
   if (sameName) return failed("Ya hay una cobertura con ese nombre.");
   if (data.isParticular) {
