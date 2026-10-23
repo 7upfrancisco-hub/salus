@@ -11,6 +11,14 @@ export const dniSchema = z
 
 export const emailSchema = z.string().trim().toLowerCase().pipe(z.email("Ingresá un email válido"));
 
+/** Nombre con el que entra el personal: un email o un usuario simple (letras, números, punto, guion y guion bajo). */
+export const LOGIN_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{2,39}$/;
+export const loginNameSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .refine((value) => LOGIN_NAME_PATTERN.test(value) || z.email().safeParse(value).success, "Ingresá un usuario (letras, números, punto, guion) o un email válido");
+
 export const phoneSchema = z
   .string()
   .trim()

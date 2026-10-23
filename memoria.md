@@ -57,6 +57,13 @@ Cómo está hecho:
 
 Pendiente de este tema: el centro tiene que cargar sus 3 estudios reales y crear las reglas «Preocupacional» de sus profesionales; sin eso el turnero muestra "no hay turnos preocupacionales online".
 
+## Acceso del personal (2026-10-23)
+
+- El login acepta un **usuario simple** (letras, números, `.`, `-`, `_`, 3 a 40) **o un email**; se guarda en la columna `User.email`. No distingue mayúsculas. Validación en `loginNameSchema` (`validation.ts`); Configuración → Usuarios también lo acepta al crear.
+- `prisma/seed.ts` ya no crea un administrador si existe alguno (antes lo buscaba por `SEED_ADMIN_EMAIL`: si se renombraba el admin, cada deploy recreaba el viejo con la clave de arranque).
+- `scripts/cambiar-usuario.mts`: cambia usuario y contraseña del administrador (o de `CURRENT_LOGIN`); los datos nuevos van por `NEW_LOGIN` / `NEW_PASSWORD`, nunca se guardan en el repo (es público). Deja `USER_LOGIN_CHANGED` en la auditoría, sin la contraseña.
+- Producción: el administrador se cambia con ese script contra Neon (el nombre nuevo no se anota acá porque el repo es público).
+
 ## Reglas de negocio acordadas
 
 - La semana va de lunes a domingo; el mes es de calendario.

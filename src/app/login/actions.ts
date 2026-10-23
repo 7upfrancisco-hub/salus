@@ -13,8 +13,9 @@ const LOGIN_WINDOW_MS = 15 * 60_000;
 const LOGIN_MAX_FAILURES = 6;
 const LOGIN_MAX_FAILURES_PER_IP = 30;
 
+// El campo se llama "email" por historia, pero acepta un usuario simple o un email: solo se busca tal cual.
 const loginSchema = z.object({
-  email: z.string().trim().toLowerCase().pipe(z.email()),
+  email: z.string().trim().toLowerCase().min(1).max(120),
   password: z.string().min(1),
 });
 
@@ -30,7 +31,7 @@ export async function login(_prev: LoginState, formData: FormData): Promise<Logi
     password: formData.get("password"),
   });
   const typedEmail = String(formData.get("email") ?? "");
-  if (!parsed.success) return { error: "Ingresá un email y una contraseña válidos.", email: typedEmail };
+  if (!parsed.success) return { error: "Ingresá tu usuario y tu contraseña.", email: typedEmail };
 
   // Freno a la fuerza bruta: solo cuentan los intentos fallidos, por email y por IP en general.
   const emailBucket = `login:${parsed.data.email}`;

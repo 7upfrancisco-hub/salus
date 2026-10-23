@@ -76,7 +76,7 @@ export default async function UsersPage() {
         <Card title="Agregar usuario" description="La contraseña inicial se la pasás a la persona, que después puede pedir que se la cambien (mínimo 10 caracteres).">
           <ActionForm action={createUser} resetOnSuccess submitLabel="Crear usuario" className="flex flex-wrap items-end gap-3">
             <Field label="Nombre" htmlFor="nu-name"><TextInput id="nu-name" name="name" required className="w-52" /></Field>
-            <Field label="Email" htmlFor="nu-email"><TextInput id="nu-email" name="email" type="email" required className="w-60" /></Field>
+            <Field label="Usuario o email" htmlFor="nu-email" hint="Con este nombre entra al sistema"><TextInput id="nu-email" name="email" type="text" autoCapitalize="none" autoComplete="off" required className="w-60" /></Field>
             <Field label="Contraseña inicial" htmlFor="nu-pass"><TextInput id="nu-pass" name="password" type="text" autoComplete="off" minLength={10} required className="w-52" /></Field>
             <Field label="Rol" htmlFor="nu-role">
               <Select id="nu-role" name="role" defaultValue="SECRETARY" className="w-44">

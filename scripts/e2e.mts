@@ -446,18 +446,18 @@ try {
     await login(page, "admin@salus.local", "admin1234");
     await page.goto(`${BASE}/configuracion/usuarios`);
     await page.locator("#nu-name").fill("Secretaría E2E");
-    await page.locator("#nu-email").fill("e2e.secretaria@example.com");
+    await page.locator("#nu-email").fill("e2e.secretaria");
     await page.locator("#nu-pass").fill("clave-segura-123");
     const createForm = page.locator("form", { has: page.locator("#nu-name") });
     await createForm.getByLabel("Dra. Gómez").check();
     await createForm.getByRole("button", { name: "Crear usuario" }).click();
     await page.getByText("Guardado ✓").first().waitFor();
-    ok("la administración crea un usuario de secretaría con acceso a una sola agenda", (await db.user.count({ where: { email: "e2e.secretaria@example.com" } })) === 1);
+    ok("la administración crea un usuario de secretaría con acceso a una sola agenda", (await db.user.count({ where: { email: "e2e.secretaria" } })) === 1);
     await page.context().close();
 
     const secretary = await (await browser.newContext()).newPage();
     secretary.setDefaultTimeout(30_000);
-    await login(secretary, "e2e.secretaria@example.com", "clave-segura-123");
+    await login(secretary, "e2e.secretaria", "clave-segura-123");
     await secretary.getByRole("heading", { level: 1 }).first().waitFor();
     ok("el nuevo usuario de secretaría entra y ve solo la agenda que se le asignó", (await secretary.getByRole("heading", { name: "Dra. Gómez" }).count()) === 1 && (await secretary.getByText("Dr. Pérez").count()) === 0);
     await secretary.goto(`${BASE}/configuracion/catalogos`);
@@ -582,8 +582,8 @@ try {
   await db.notificationLog.deleteMany({ where: { OR: [{ appointment: { patientId: { in: ids } } }, { waitlistEntry: { patientId: { in: ids } } }] } });
   await db.coverageRule.deleteMany({ where: { coverage: { name: "Obra Social E2E" } } });
   await db.coverage.deleteMany({ where: { name: "Obra Social E2E" } });
-  await db.userProfessionalAccess.deleteMany({ where: { user: { email: "e2e.secretaria@example.com" } } });
-  await db.user.deleteMany({ where: { email: "e2e.secretaria@example.com" } });
+  await db.userProfessionalAccess.deleteMany({ where: { user: { email: "e2e.secretaria" } } });
+  await db.user.deleteMany({ where: { email: "e2e.secretaria" } });
   await db.appointment.deleteMany({ where: { patientId: { in: ids } } });
   await db.occupationalStudy.deleteMany({ where: { name: "Estudio E2E" } });
   await db.patient.deleteMany({ where: { id: { in: ids } } });

@@ -11,15 +11,23 @@ const hm = (h: number, m = 0) => h * 60 + m;
 const MON = 1, TUE = 2, WED = 3, THU = 4, FRI = 5;
 
 async function seedCore() {
+  await db.centerSettings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
+
+  // Con un administrador ya creado no se hace nada: si su usuario se renombró (Configuración → Usuarios o
+  // scripts/cambiar-usuario.mts), buscarlo por SEED_ADMIN_EMAIL no lo encontraría y se crearía otro con el
+  // usuario y la contraseña de arranque, que ya no deberían existir.
+  const admins = await db.user.count({ where: { role: "ADMIN" } });
+  if (admins > 0) {
+    console.log("Ya hay un administrador: no se crea otro.");
+    return;
+  }
+
   const email = process.env.SEED_ADMIN_EMAIL;
   const password = process.env.SEED_ADMIN_PASSWORD;
   if (!email || !password) throw new Error("Definí SEED_ADMIN_EMAIL y SEED_ADMIN_PASSWORD");
 
-  await db.centerSettings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
-  await db.user.upsert({
-    where: { email },
-    update: {},
-    create: {
+  await db.user.create({
+    data: {
       email,
       name: "Administrador",
       role: "ADMIN",
@@ -27,7 +35,7 @@ async function seedCore() {
       passwordHash: await bcrypt.hash(password, 12),
     },
   });
-  console.log(`Administrador listo: ${email}`);
+  console.log(`Administrador creado: ${email}`);
 }
 
 /** Datos de ejemplo para desarrollo. Nunca correr en producción. */

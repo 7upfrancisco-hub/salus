@@ -8,7 +8,7 @@ import { requireAdmin } from "@/lib/config-access";
 import { ROLES } from "@/lib/constants";
 import { db } from "@/lib/db";
 import { failed, saved, summarize, type FormState } from "@/lib/form-state";
-import { emailSchema, fieldErrors } from "@/lib/validation";
+import { fieldErrors, loginNameSchema } from "@/lib/validation";
 
 const checkbox = z.preprocess((v) => v === "on", z.boolean());
 const passwordSchema = z.string().min(10, "La contraseña debe tener al menos 10 caracteres").max(100);
@@ -21,7 +21,8 @@ const baseSchema = z.object({
 });
 
 const createSchema = baseSchema.extend({
-  email: emailSchema,
+  // La columna se llama email, pero guarda el nombre de ingreso: un usuario simple o un email.
+  email: loginNameSchema,
   password: passwordSchema,
   role: z.enum([ROLES.ADMIN, ROLES.SECRETARY, ROLES.PROFESSIONAL], "Elegí el rol"),
 });
@@ -49,7 +50,7 @@ export async function createUser(_prev: FormState, formData: FormData): Promise<
   const data = parsed.data;
   const accessIds = formData.getAll("access").map(String);
 
-  if (await db.user.findUnique({ where: { email: data.email }, select: { id: true } })) return failed("Ya existe un usuario con ese email.");
+  if (await db.user.findUnique({ where: { email: data.email }, select: { id: true } })) return failed("Ya existe un usuario con ese nombre de ingreso.");
   if (data.role === ROLES.PROFESSIONAL) {
     if (!data.professionalId) return failed("Elegí a qué profesional corresponde este usuario.");
     const taken = await db.professional.findUnique({ where: { id: data.professionalId }, select: { userId: true } });

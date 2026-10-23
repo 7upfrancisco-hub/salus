@@ -26,6 +26,7 @@ datos reales; ver `SEED_DEMO` más abajo). Salen del seed: `admin@salus.local` /
 | `npm test` | El motor de turnos (cupos, franjas, feriados, edad…) con tests unitarios |
 | `npm run check:reservas` | El servicio de reservas contra la base (overrides, permisos, lista de espera…) |
 | `npm run check:ui` | Un navegador real haciendo clic: paciente, secretaría, profesional y administración (necesita el servidor corriendo) |
+| `npx tsx scripts/cambiar-usuario.mts` | Cambia el usuario y la contraseña del administrador de la base de `DATABASE_URL` (datos nuevos por `NEW_LOGIN` y `NEW_PASSWORD`, nunca en archivos) |
 | `npx tsx scripts/limpiar-demo.mts` | Borra los datos de demostración de la base de `DATABASE_URL` (simulacro; con `--confirmar` borra de verdad) |
 | `npm run turnos -- perez PAMI` | Muestra la disponibilidad real de un profesional y cobertura, sin pantallas |
 
@@ -97,7 +98,9 @@ El plan gratuito de Vercel solo permite un cron por día, así que hay dos progr
 
 - [x] PostgreSQL (hecho): el índice anti doble reserva está en la migración `init` y `bookAppointment` serializa
       las reservas con un candado de la base (`pg_advisory_xact_lock`).
-- [ ] No cargar los datos de ejemplo (`SEED_DEMO`) ni las contraseñas del seed; crear un administrador real.
+- [ ] No cargar los datos de ejemplo (`SEED_DEMO`) ni las contraseñas del seed; crear un administrador real. El personal entra con un
+      **usuario** simple (`mi-usuario`) o con un email; `scripts/cambiar-usuario.mts` cambia el del administrador. El seed no crea otro
+      administrador si ya existe uno.
 - [ ] HTTPS, `SESSION_SECRET` y `CRON_SECRET` propios, cuenta y dominio verificado en Resend.
 - [x] El límite de pedidos y el freno del login (`src/lib/rate-limit.ts`) se cuentan en la base (tabla
       `RateLimitHit`), así que valen con varias instancias. La IP sale de `x-vercel-forwarded-for` en Vercel.
