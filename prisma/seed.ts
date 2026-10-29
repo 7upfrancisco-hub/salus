@@ -40,7 +40,7 @@ async function seedCore() {
 }
 
 /**
- * Datos de ejemplo (profesionales, coberturas, reglas y estudios). Opciones por variable de entorno:
+ * Datos de ejemplo (profesionales, coberturas y reglas). Opciones por variable de entorno:
  *   SEED_DEMO_USERS=0         no crea los usuarios de ejemplo (sus contraseñas están en este archivo, que es público):
  *                             imprescindible si la base es la de producción.
  *   SEED_DEMO_APPOINTMENTS=1  agrega pacientes y turnos ficticios en los próximos días, para mostrar la agenda y el PDF.
@@ -64,45 +64,17 @@ async function seedDemo() {
     coverage({ name: "OSDE", sortOrder: 2, color: "#ea580c" }),
   ]);
 
-  const [trauma, pedia, neuro, laboral] = await Promise.all([
+  const [trauma, pedia, neuro] = await Promise.all([
     specialty({ name: "Traumatología" }),
     specialty({ name: "Pediatría", minAgeYears: 0, maxAgeYears: 17 }),
     specialty({ name: "Neurología" }),
-    specialty({ name: "Medicina laboral" }),
   ]);
-
-  // La cobertura "Preocupacional" la crea una migración (no es una obra social: ver Coverage.isOccupational).
-  const preocupacional = await db.coverage.findFirstOrThrow({ where: { isOccupational: true } });
-  await db.occupationalStudy.createMany({
-    data: [
-      {
-        name: "Examen preocupacional básico",
-        description: "Examen clínico general.",
-        instructions: "DNI\nNota o pedido de la empresa",
-        sortOrder: 0,
-      },
-      {
-        name: "Examen con laboratorio",
-        description: "Incluye análisis de sangre y orina.",
-        instructions: "Venir con 8 horas de ayuno\nDNI\nNota o pedido de la empresa",
-        sortOrder: 1,
-      },
-      {
-        name: "Examen con estudios complementarios",
-        description: "Incluye radiografía de tórax y audiometría.",
-        instructions: "DNI\nNota o pedido de la empresa",
-        sortOrder: 2,
-      },
-    ],
-    skipDuplicates: true,
-  });
 
   const [c1, c2, c3] = await Promise.all([office("Consultorio 1"), office("Consultorio 2"), office("Consultorio 3")]);
 
   const perez = await db.professional.create({ data: { name: "Dr. Pérez", licenseNumber: "MP 1001", specialtyId: trauma.id } });
   const gomez = await db.professional.create({ data: { name: "Dra. Gómez", licenseNumber: "MP 1002", specialtyId: pedia.id } });
   const ruiz = await db.professional.create({ data: { name: "Dr. Ruiz", licenseNumber: "MP 1003", specialtyId: neuro.id } });
-  const medina = await db.professional.create({ data: { name: "Dra. Medina", licenseNumber: "MP 1004", specialtyId: laboral.id } });
 
   // Capa 1: agenda base
   const blocks = (professionalId: string, officeId: string, days: number[], from: number, to: number, slot: number) =>
@@ -112,7 +84,6 @@ async function seedDemo() {
       ...blocks(perez.id, c1.id, [MON, WED, FRI], hm(9), hm(13), 20),
       ...blocks(gomez.id, c2.id, [MON, TUE, WED, THU], hm(14), hm(18), 30),
       ...blocks(ruiz.id, c3.id, [TUE, THU], hm(8), hm(12), 30),
-      ...blocks(medina.id, c1.id, [TUE, THU], hm(8), hm(12), 20),
     ],
   });
 
@@ -149,9 +120,6 @@ async function seedDemo() {
       quotas: [{ period: "WEEK", max: 8 }],
       requirements: ["Orden médica", "Credencial OSDE"] },
     { professionalId: ruiz.id, coverageId: particular.id, days: [TUE, THU], from: hm(10), to: hm(12),
-      requirements: ["DNI"] },
-    // Dra. Medina (medicina laboral): solo preocupacionales, martes y jueves de mañana
-    { professionalId: medina.id, coverageId: preocupacional.id, days: [TUE, THU], from: hm(8), to: hm(12),
       requirements: ["DNI"] },
   ];
 
@@ -197,22 +165,22 @@ async function seedDemo() {
   let appointments = 0;
   if (process.env.SEED_DEMO_APPOINTMENTS === "1") {
     appointments = await seedDemoAppointments({
-      professionals: { perez, gomez, ruiz, medina },
-      offices: { perez: c1, gomez: c2, ruiz: c3, medina: c1 },
-      coverages: { particular, pami, osde, preocupacional },
+      professionals: { perez, gomez, ruiz },
+      offices: { perez: c1, gomez: c2, ruiz: c3 },
+      coverages: { particular, pami, osde },
     });
   }
 
   console.log(
-    `Datos de ejemplo cargados (4 profesionales, 4 coberturas con Preocupacional, 9 reglas, 3 estudios, ${withUsers ? "2 usuarios" : "sin usuarios de ejemplo"}, ${appointments} turnos).`,
+    `Datos de ejemplo cargados (3 profesionales, 3 coberturas, 8 reglas, ${withUsers ? "2 usuarios" : "sin usuarios de ejemplo"}, ${appointments} turnos).`,
   );
 }
 
 type Id = { id: string };
 type DemoContext = {
-  professionals: Record<"perez" | "gomez" | "ruiz" | "medina", Id>;
-  offices: Record<"perez" | "gomez" | "ruiz" | "medina", Id>;
-  coverages: Record<"particular" | "pami" | "osde" | "preocupacional", Id>;
+  professionals: Record<"perez" | "gomez" | "ruiz", Id>;
+  offices: Record<"perez" | "gomez" | "ruiz", Id>;
+  coverages: Record<"particular" | "pami" | "osde", Id>;
 };
 
 /**
@@ -224,7 +192,6 @@ async function seedDemoAppointments(ctx: DemoContext) {
   const settings = await db.centerSettings.findUnique({ where: { id: 1 } });
   const timezone = settings?.timezone ?? "America/Argentina/Buenos_Aires";
   const today = todayInZone(timezone);
-  const studies = await db.occupationalStudy.findMany({ orderBy: { sortOrder: "asc" } });
 
   const adults: [string, string, string][] = [
     ["Lucía", "Fernández", "1984-03-12"], ["Martín", "Gómez", "1979-11-02"], ["Carolina", "Rossi", "1991-07-25"],
@@ -233,13 +200,9 @@ async function seedDemoAppointments(ctx: DemoContext) {
     ["Raúl", "Domínguez", "1961-06-17"], ["Paula", "Ibarra", "1993-02-27"], ["Nicolás", "Herrera", "1988-10-09"],
   ];
   const kids: [string, string, string][] = [["Mateo", "Álvarez", "2018-05-20"], ["Sofía", "Ledesma", "2015-09-03"], ["Joaquín", "Navarro", "2020-01-15"]];
-  const workers: [string, string, string][] = [
-    ["Facundo", "Ríos", "1996-03-30"], ["Gabriela", "Luna", "1990-06-11"], ["Jorge", "Medina", "1985-12-05"],
-    ["Natalia", "Cabrera", "1999-08-18"], ["Pablo", "Ortiz", "1982-04-22"], ["Romina", "Vega", "1994-10-27"],
-  ];
-  const pools = { adults, kids, workers };
+  const pools = { adults, kids };
 
-  const everyone = [...adults, ...kids, ...workers];
+  const everyone = [...adults, ...kids];
   await db.patient.createMany({
     data: everyone.map(([firstName, lastName, birthDate], i) => ({
       dni: `800000${String(i + 1).padStart(2, "0")}`,
@@ -253,11 +216,11 @@ async function seedDemoAppointments(ctx: DemoContext) {
   });
   const patients = await db.patient.findMany({ where: { dni: { startsWith: "800000" } }, orderBy: { dni: "asc" } });
   const pick = (pool: keyof typeof pools, n: number) => {
-    const offset = pool === "adults" ? 0 : pool === "kids" ? adults.length : adults.length + kids.length;
+    const offset = pool === "adults" ? 0 : adults.length;
     return patients[offset + (n % pools[pool].length)];
   };
 
-  const SLOT = { perez: 20, gomez: 30, ruiz: 30, medina: 20 } as const;
+  const SLOT = { perez: 20, gomez: 30, ruiz: 30 } as const;
   type Plan = {
     pro: keyof typeof SLOT;
     days: number[];
@@ -267,8 +230,6 @@ async function seedDemoAppointments(ctx: DemoContext) {
     patient: number;
     confirmed?: boolean;
     control?: boolean;
-    study?: number;
-    company?: string;
   };
   const plans: Plan[] = [
     // Dr. Pérez (lun, mié, vie)
@@ -287,12 +248,6 @@ async function seedDemoAppointments(ctx: DemoContext) {
     { pro: "ruiz", days: [4], at: hm(8, 30), coverage: "pami", pool: "adults", patient: 9 },
     { pro: "ruiz", days: [2], at: hm(8), coverage: "osde", pool: "adults", patient: 10 },
     { pro: "ruiz", days: [2, 4], at: hm(10), coverage: "particular", pool: "adults", patient: 11 },
-    // Dra. Medina (medicina laboral: preocupacionales, mar y jue)
-    { pro: "medina", days: [2, 4], at: hm(8), coverage: "preocupacional", pool: "workers", patient: 0, study: 0, company: "Constructora del Sur S.A." },
-    { pro: "medina", days: [2, 4], at: hm(8, 20), coverage: "preocupacional", pool: "workers", patient: 1, study: 1, company: "Constructora del Sur S.A.", confirmed: true },
-    { pro: "medina", days: [2, 4], at: hm(8, 40), coverage: "preocupacional", pool: "workers", patient: 2, study: 0, company: "Transportes Andinos S.R.L." },
-    { pro: "medina", days: [2, 4], at: hm(9), coverage: "preocupacional", pool: "workers", patient: 3, study: 2, company: "Transportes Andinos S.R.L." },
-    { pro: "medina", days: [2, 4], at: hm(9, 20), coverage: "preocupacional", pool: "workers", patient: 4, study: 1, company: "Frigorífico del Plata S.A." },
   ];
 
   const data = [];
@@ -312,8 +267,6 @@ async function seedDemoAppointments(ctx: DemoContext) {
         status: plan.confirmed ? "CONFIRMED" : "RESERVED",
         visitType: plan.control ? "CONTROL" : "FIRST",
         source: plan.confirmed ? "STAFF" : "PUBLIC",
-        studyId: plan.study !== undefined ? (studies[plan.study]?.id ?? null) : null,
-        company: plan.company ?? null,
       });
     }
   }

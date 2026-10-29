@@ -35,11 +35,8 @@ const today = todayInZone(settings.timezone);
 let monday = addDaysToDate(today, 4);
 while (weekdayOf(monday) !== 1) monday = addDaysToDate(monday, 1);
 
-let tuesday = addDaysToDate(today, 4);
-while (weekdayOf(tuesday) !== 2) tuesday = addDaysToDate(tuesday, 1);
 
 const perez = await db.professional.findFirstOrThrow({ where: { name: "Dr. Pérez" } });
-const medina = await db.professional.findFirstOrThrow({ where: { name: "Dra. Medina" } });
 const ruiz = await db.professional.findFirstOrThrow({ where: { name: "Dr. Ruiz" } });
 const pamiRule = await db.coverageRule.findFirstOrThrow({ where: { professionalId: perez.id, coverage: { name: "PAMI" } } });
 
@@ -56,10 +53,9 @@ async function login(page: Page, email: string, password: string) {
   await page.waitForURL("**/agenda**");
 }
 
-/** Entra al turnero y elige el camino "Personal" (la primera pregunta es personal o preocupacional). */
+/** Entra al turnero. */
 async function openPersonal(page: Page) {
   await page.goto(BASE);
-  await page.getByRole("button", { name: /^Personal/ }).click();
 }
 
 /** Descarga un PDF con un clic y devuelve su nombre y cuántas páginas tiene. */
@@ -88,14 +84,9 @@ try {
     const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage(); // celular
     page.setDefaultTimeout(30_000);
     await page.goto(BASE);
-    ok(
-      "la entrada pregunta si el turno es personal o preocupacional",
-      (await page.getByRole("button", { name: /^Personal/ }).count()) === 1 && (await page.getByRole("button", { name: /^Preocupacional/ }).count()) === 1,
-    );
-    ok("hasta elegir el tipo de turno no muestra coberturas", (await page.getByRole("button", { name: "PAMI" }).count()) === 0);
-    await page.getByRole("button", { name: /^Personal/ }).click();
+    ok("la entrada pide la cobertura, sin preguntar el tipo de turno", (await page.getByText("¿Con qué cobertura te atendés?").count()) === 1 && (await page.getByText("¿Qué tipo de turno necesitás?").count()) === 0);
     ok("la página pública muestra las coberturas", (await page.getByRole("button", { name: "PAMI" }).count()) > 0);
-    ok("la cobertura Preocupacional no aparece entre las coberturas", (await page.getByRole("button", { name: "Preocupacional", exact: true }).count()) === 0);
+    ok("no hay camino preocupacional", (await page.getByText("Preocupacional").count()) === 0);
 
     await page.getByRole("button", { name: "PAMI" }).click();
     await page.getByRole("button", { name: "Traumatología" }).click();
@@ -162,43 +153,6 @@ try {
     await page.getByRole("button", { name: "Buscar turno" }).click();
     await page.getByText("¿Ya te atendiste antes con este profesional?").waitFor();
     ok("con OSDE y el Dr. Pérez pregunta si es primera vez o control (duran distinto)", true);
-    await page.context().close();
-  }
-
-  console.log("\nPaciente: preocupacional");
-  {
-    const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
-    page.setDefaultTimeout(30_000);
-    await page.goto(BASE);
-    await page.getByRole("button", { name: /^Preocupacional/ }).click();
-    ok("no pide obra social ni especialidad", (await page.getByText("¿Con qué cobertura te atendés?").count()) === 0 && (await page.getByText("¿Qué especialidad necesitás?").count()) === 0);
-    const studies = ["Examen preocupacional básico", "Examen con laboratorio", "Examen con estudios complementarios"];
-    const shown = await Promise.all(studies.map((name) => page.getByRole("button", { name: new RegExp(name) }).count()));
-    ok("ofrece los 3 estudios para elegir", shown.every((n) => n === 1), JSON.stringify(shown));
-
-    await page.getByRole("button", { name: /Examen con laboratorio/ }).click();
-    await page.getByText("Elegí día y horario").waitFor();
-    await page.getByText("Próximo turno disponible").waitFor();
-    ok("al elegir el estudio pasa directo a la agenda con turnos disponibles", true);
-    await page.getByText("Próximo turno disponible").click();
-
-    await page.getByText("Para este turno tenés que traer:").waitFor();
-    ok("muestra las indicaciones del estudio elegido", (await page.getByText("Venir con 8 horas de ayuno").count()) > 0);
-    ok("en preocupacional no pide número de afiliado y sí la empresa", (await page.getByLabel("Número de afiliado").count()) === 0 && (await page.getByLabel("Empresa que solicita el estudio").count()) === 1);
-
-    await fillPatient(page, 20);
-    await page.getByLabel("Empresa que solicita el estudio").fill("Constructora E2E SA");
-    await page.getByRole("checkbox").check();
-    await page.getByRole("button", { name: "Confirmar turno" }).click();
-    await page.waitForURL("**/turno/**");
-    ok("reserva el turno preocupacional", true);
-    ok(
-      "la página del turno muestra el tipo, el estudio y la empresa",
-      (await page.getByText("Preocupacional", { exact: true }).count()) > 0 &&
-        (await page.getByText("Examen con laboratorio").count()) > 0 &&
-        (await page.getByText("Constructora E2E SA").count()) > 0,
-    );
-    ok("y repite las indicaciones del estudio", (await page.getByText("Venir con 8 horas de ayuno").count()) > 0);
     await page.context().close();
   }
 
@@ -282,9 +236,8 @@ try {
 
     const doctor = await downloadPdf(page, "Descargar agenda del día (PDF)");
     ok("descarga la agenda del médico en PDF", doctor.valid && doctor.filename === `agenda-${monday}-dr-perez.pdf`, JSON.stringify(doctor));
-    const occupational = await downloadPdf(page, "Descargar preocupacionales del día (PDF)");
-    ok("descarga la agenda de preocupacionales en PDF", occupational.valid && occupational.filename === `preocupacionales-${monday}.pdf`, JSON.stringify(occupational));
-    ok("cada descarga queda en el registro de actividad", (await db.auditLog.count({ where: { action: "AGENDA_DOWNLOADED", createdAt: { gte: startedAt } } })) >= 2);
+    ok("ya no hay descarga de preocupacionales", (await page.getByRole("link", { name: /preocupacionales/i }).count()) === 0);
+    ok("la descarga queda en el registro de actividad", (await db.auditLog.count({ where: { action: "AGENDA_DOWNLOADED", createdAt: { gte: startedAt } } })) >= 1);
 
     const request = page.context().request;
     ok("no deja descargar la agenda de un profesional no asignado", (await request.get(`${BASE}/agenda/descargar?profesional=${ruiz.id}&fecha=${monday}`)).status() === 403);
@@ -386,56 +339,6 @@ try {
     // Registro de actividad
     await page.goto(`${BASE}/configuracion/auditoria`);
     ok("el registro de actividad muestra los overrides", (await page.getByText("Turno con override").count()) > 0);
-    await page.context().close();
-  }
-
-  console.log("\nAdministración: preocupacional");
-  {
-    const page = await (await browser.newContext({ viewport: { width: 1280, height: 1000 } })).newPage();
-    page.setDefaultTimeout(30_000);
-    await login(page, "admin@salus.local", "admin1234");
-
-    await page.goto(`${BASE}/configuracion/catalogos`);
-    ok("la cobertura Preocupacional no se puede renombrar", (await page.locator('input[name="name"][value="Preocupacional"]').getAttribute("readonly")) !== null);
-
-    await page.goto(`${BASE}/configuracion/estudios`);
-    await page.getByRole("heading", { name: "Estudios preocupacionales" }).waitFor();
-    ok("lista los estudios cargados", (await page.getByText("Examen con laboratorio").count()) === 0 && (await page.locator('input[value="Examen con laboratorio"]').count()) === 1);
-    await page.locator("#new-stn").fill("Estudio E2E");
-    await page.locator("#std-new").fill("Descripción de prueba");
-    await page.locator("#sti-new").fill("Traer el DNI\nTraer anteojos");
-    await page.locator("form", { has: page.locator("#new-stn") }).getByRole("button", { name: "Agregar" }).click();
-    await page.getByText("Guardado ✓").first().waitFor();
-    const created = await db.occupationalStudy.findFirstOrThrow({ where: { name: "Estudio E2E" } });
-    ok("se puede agregar un estudio desde la pantalla", created.instructions === "Traer el DNI\nTraer anteojos" && created.active);
-    await page.goto(BASE);
-    await page.getByRole("button", { name: /^Preocupacional/ }).click();
-    ok("el estudio nuevo aparece enseguida en el turnero", (await page.getByRole("button", { name: /Estudio E2E/ }).count()) === 1);
-    await db.occupationalStudy.update({ where: { id: created.id }, data: { active: false } });
-    await page.goto(BASE);
-    await page.getByRole("button", { name: /^Preocupacional/ }).click();
-    ok("un estudio desactivado deja de ofrecerse", (await page.getByRole("button", { name: /Estudio E2E/ }).count()) === 0);
-
-    // Secretaría/administración da un turno preocupacional desde la agenda de la profesional.
-    await page.goto(`${BASE}/agenda?profesional=${medina.id}&fecha=${tuesday}`);
-    await page.getByRole("heading", { name: "Dra. Medina" }).waitFor();
-    await page.getByRole("link", { name: "Preocupacional", exact: true }).first().click();
-    await page.getByRole("heading", { name: "Dar turno" }).waitFor();
-    ok("al elegir Preocupacional pide estudio y empresa, y no el número de afiliado", (await page.locator("#studyId").count()) === 1 && (await page.locator("#company").count()) === 1 && (await page.getByLabel("Número de afiliado").count()) === 0);
-    const submit = page.getByRole("button", { name: "Dar turno", exact: true });
-    ok("no se puede enviar sin elegir el estudio", await submit.isDisabled());
-    await page.locator("#studyId").selectOption({ label: "Examen preocupacional básico" });
-    await page.locator("#company").fill("Transportes E2E SRL");
-    await fillPatient(page, 21);
-    await submit.click();
-    await page.waitForURL("**/agenda?**");
-    const booked = await db.appointment.findFirstOrThrow({ where: { patient: { dni: "91000021" } }, include: { study: true } });
-    ok("el turno queda con el estudio y la empresa", booked.study?.name === "Examen preocupacional básico" && booked.company === "Transportes E2E SRL" && booked.source === "STAFF");
-    await page.getByText(/Navegador21/).first().click();
-    ok("la agenda muestra el estudio y la empresa del turno", (await page.getByText("Transportes E2E SRL").count()) > 0 && (await page.getByText("Examen preocupacional básico").count()) > 0);
-
-    const occupational = await downloadPdf(page, "Descargar preocupacionales del día (PDF)");
-    ok("la agenda de preocupacionales del día se descarga en PDF", occupational.valid && occupational.filename === `preocupacionales-${tuesday}.pdf`, JSON.stringify(occupational));
     await page.context().close();
   }
 
@@ -585,9 +488,8 @@ try {
   await db.userProfessionalAccess.deleteMany({ where: { user: { email: "e2e.secretaria" } } });
   await db.user.deleteMany({ where: { email: "e2e.secretaria" } });
   await db.appointment.deleteMany({ where: { patientId: { in: ids } } });
-  await db.occupationalStudy.deleteMany({ where: { name: "Estudio E2E" } });
   await db.patient.deleteMany({ where: { id: { in: ids } } });
-  await db.auditLog.deleteMany({ where: { createdAt: { gte: startedAt }, OR: [{ entity: { in: ["Appointment", "Patient", "WaitlistEntry", "ScheduleException", "CoverageRule", "Coverage", "Professional", "OccupationalStudy", "Agenda"] } }, { action: { in: ["USER_CREATED", "LOGIN", "LOGIN_FAILED"] } }] } });
+  await db.auditLog.deleteMany({ where: { createdAt: { gte: startedAt }, OR: [{ entity: { in: ["Appointment", "Patient", "WaitlistEntry", "ScheduleException", "CoverageRule", "Coverage", "Professional", "Agenda"] } }, { action: { in: ["USER_CREATED", "LOGIN", "LOGIN_FAILED"] } }] } });
   await db.$disconnect();
 }
 

@@ -1,13 +1,12 @@
-import { canManageProfessional, getManageableProfessionals } from "@/lib/access";
-import { doctorDayAgenda, occupationalDayAgenda } from "@/lib/agenda-export";
+import { canManageProfessional } from "@/lib/access";
+import { doctorDayAgenda } from "@/lib/agenda-export";
 import { buildAgendaPdf } from "@/lib/agenda-pdf";
 import { audit } from "@/lib/audit";
 import { getCurrentUser } from "@/lib/auth";
 
 /**
  * Descarga en PDF de la agenda del día:
- *   /agenda/descargar?profesional=<id>&fecha=YYYY-MM-DD      la de un médico
- *   /agenda/descargar?tipo=preocupacional&fecha=YYYY-MM-DD   los preocupacionales del día
+ *   /agenda/descargar?profesional=<id>&fecha=YYYY-MM-DD
  * Solo para el personal, y solo de las agendas que cada usuario puede ver (ver lib/access.ts). Como el
  * archivo trae datos personales de salud, cada descarga queda en el registro de actividad.
  */
@@ -33,27 +32,13 @@ export async function GET(request: Request) {
   const date = params.get("fecha") ?? "";
   if (!isRealDate(date)) return text(400, "Fecha inválida.");
 
-  let pdf;
-  let filename: string;
-  const generatedBy = user.name;
+  const professionalId = params.get("profesional") ?? "";
+  if (!professionalId || !(await canManageProfessional(user, professionalId))) return text(403, "No tenés acceso a esa agenda.");
+  const result = await doctorDayAgenda({ professionalId, date, generatedBy: user.name });
+  const filename = `agenda-${date}-${slug(result.professionalName)}.pdf`;
+  await audit({ userId: user.id, action: "AGENDA_DOWNLOADED", entity: "Agenda", entityId: professionalId, details: { date, turnos: result.count } });
 
-  if (params.get("tipo") === "preocupacional") {
-    const professionals = await getManageableProfessionals(user);
-    if (professionals.length === 0) return text(403, "No tenés agendas asignadas.");
-    const result = await occupationalDayAgenda({ professionalIds: professionals.map((p) => p.id), date, generatedBy });
-    pdf = result.pdf;
-    filename = `preocupacionales-${date}.pdf`;
-    await audit({ userId: user.id, action: "AGENDA_DOWNLOADED", entity: "Agenda", details: { date, tipo: "preocupacional", turnos: result.count } });
-  } else {
-    const professionalId = params.get("profesional") ?? "";
-    if (!professionalId || !(await canManageProfessional(user, professionalId))) return text(403, "No tenés acceso a esa agenda.");
-    const result = await doctorDayAgenda({ professionalId, date, generatedBy });
-    pdf = result.pdf;
-    filename = `agenda-${date}-${slug(result.professionalName)}.pdf`;
-    await audit({ userId: user.id, action: "AGENDA_DOWNLOADED", entity: "Agenda", entityId: professionalId, details: { date, turnos: result.count } });
-  }
-
-  const bytes = await buildAgendaPdf(pdf);
+  const bytes = await buildAgendaPdf(result.pdf);
   return new Response(new Blob([new Uint8Array(bytes)], { type: "application/pdf" }), {
     headers: {
       "Content-Type": "application/pdf",

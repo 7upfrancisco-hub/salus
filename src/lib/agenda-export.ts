@@ -5,7 +5,7 @@ import type { PdfAgenda } from "@/lib/agenda-pdf";
 import { APPOINTMENT_STATUS_LABEL, VISIT_TYPE_LABEL } from "@/lib/status-labels";
 import { capitalizeFirst, minutesToTime, utcToZoned } from "@/lib/time";
 
-/** Datos de las agendas del día que se descargan en PDF (la agenda de un médico y la de preocupacionales). */
+/** Datos de las agendas del día que se descargan en PDF (la agenda de un médico). */
 
 const dateLabel = (date: string) =>
   capitalizeFirst(
@@ -27,10 +27,10 @@ function footer(centerName: string, generatedBy: string, timezone: string) {
 }
 
 /** Turnos del día que se van a atender (los cancelados no figuran), en orden de horario. */
-async function dayAppointments(date: string, where: { professionalId?: string | { in: string[] }; coverage?: { isOccupational: boolean } }) {
+async function dayAppointments(date: string, professionalId: string) {
   return db.appointment.findMany({
-    where: { localDate: date, status: { not: APPOINTMENT_STATUS.CANCELLED }, ...where },
-    include: { patient: true, coverage: true, study: true, professional: true },
+    where: { localDate: date, status: { not: APPOINTMENT_STATUS.CANCELLED }, professionalId },
+    include: { patient: true, coverage: true },
     orderBy: [{ startsAt: "asc" }, { id: "asc" }],
   });
 }
@@ -43,12 +43,12 @@ const timeOf = (a: Row, timezone: string) =>
 const observations = (a: Row) =>
   [a.notes, a.isOverride && a.overrideReason ? `Sobreturno: ${a.overrideReason}` : null].filter(Boolean).join(" · ");
 
-/** Agenda del día de un profesional, con todas sus coberturas (los preocupacionales llevan estudio y empresa). */
+/** Agenda del día de un profesional, con todas sus coberturas. */
 export async function doctorDayAgenda(params: { professionalId: string; date: string; generatedBy: string }) {
   const [{ centerName, timezone }, professional, appointments] = await Promise.all([
     settings(),
     db.professional.findUniqueOrThrow({ where: { id: params.professionalId }, include: { specialty: true } }),
-    dayAppointments(params.date, { professionalId: params.professionalId }),
+    dayAppointments(params.date, params.professionalId),
   ]);
 
   const pdf: PdfAgenda = {
@@ -60,7 +60,7 @@ export async function doctorDayAgenda(params: { professionalId: string; date: st
       { header: "Paciente", width: 140 },
       { header: "DNI", width: 62 },
       { header: "Teléfono", width: 82 },
-      { header: "Cobertura / Estudio", width: 190 },
+      { header: "Cobertura", width: 190 },
       { header: "Tipo", width: 58 },
       { header: "Estado", width: 66 },
       { header: "Observaciones", width: 110 },
@@ -70,9 +70,7 @@ export async function doctorDayAgenda(params: { professionalId: string; date: st
       `${a.patient.lastName}, ${a.patient.firstName}`,
       a.patient.dni,
       a.patient.phone,
-      a.coverage.isOccupational
-        ? ["Preocupacional", a.study?.name, a.company].filter(Boolean).join("\n")
-        : [a.coverage.name, a.affiliateNumber ? `Afil. ${a.affiliateNumber}` : null].filter(Boolean).join("\n"),
+      [a.coverage.name, a.affiliateNumber ? `Afil. ${a.affiliateNumber}` : null].filter(Boolean).join("\n"),
       VISIT_TYPE_LABEL[a.visitType] ?? a.visitType,
       APPOINTMENT_STATUS_LABEL[a.status] ?? a.status,
       observations(a),
@@ -81,43 +79,4 @@ export async function doctorDayAgenda(params: { professionalId: string; date: st
     footer: footer(centerName, params.generatedBy, timezone),
   };
   return { pdf, professionalName: professional.name, count: appointments.length };
-}
-
-/** Agenda de preocupacionales del día, de los profesionales indicados (los que el usuario puede ver). */
-export async function occupationalDayAgenda(params: { professionalIds: string[]; date: string; generatedBy: string }) {
-  const [{ centerName, timezone }, appointments] = await Promise.all([
-    settings(),
-    dayAppointments(params.date, { professionalId: { in: params.professionalIds }, coverage: { isOccupational: true } }),
-  ]);
-
-  const pdf: PdfAgenda = {
-    centerName,
-    title: "Agenda de preocupacionales",
-    subtitle: `${dateLabel(params.date)} · ${plural(appointments.length)}`,
-    columns: [
-      { header: "Hora", width: 62 },
-      { header: "Paciente", width: 150 },
-      { header: "DNI", width: 62 },
-      { header: "Teléfono", width: 82 },
-      { header: "Empresa", width: 130 },
-      { header: "Estudio", width: 120 },
-      { header: "Profesional", width: 110 },
-      { header: "Estado", width: 66 },
-      { header: "Observaciones", width: 100 },
-    ],
-    rows: appointments.map((a) => [
-      timeOf(a, timezone),
-      `${a.patient.lastName}, ${a.patient.firstName}`,
-      a.patient.dni,
-      a.patient.phone,
-      a.company ?? "",
-      a.study?.name ?? "",
-      a.professional.name,
-      APPOINTMENT_STATUS_LABEL[a.status] ?? a.status,
-      observations(a),
-    ]),
-    emptyMessage: "No hay turnos preocupacionales para este día.",
-    footer: footer(centerName, params.generatedBy, timezone),
-  };
-  return { pdf, count: appointments.length };
 }

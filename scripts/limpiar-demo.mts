@@ -3,10 +3,8 @@
  *
  * Qué borra: turnos, pacientes, lista de espera, avisos, horarios, reglas, profesionales, excepciones,
  * auditoría, contadores del límite de pedidos y los usuarios de ejemplo (los que no son ADMIN y terminan
- * en @salus.local). Con --conservar-catalogos deja coberturas, especialidades, consultorios y estudios
- * preocupacionales.
- * Qué NO borra: los administradores, la configuración del centro y la cobertura «Preocupacional», que el
- * sistema necesita siempre.
+ * en @salus.local). Con --conservar-catalogos deja coberturas, especialidades y consultorios.
+ * Qué NO borra: los administradores y la configuración del centro.
  *
  * Por defecto solo muestra qué haría (simulacro). Para borrar de verdad hay que agregar --confirmar.
  *
@@ -55,10 +53,9 @@ try {
     ...(keepCatalogs
       ? {}
       : {
-          "coberturas (sin Preocupacional)": await db.coverage.count({ where: { isOccupational: false } }),
+          "coberturas": await db.coverage.count(),
           "especialidades": await db.specialty.count(),
           "consultorios": await db.office.count(),
-          "estudios preocupacionales": await db.occupationalStudy.count(),
         }),
   };
   console.log("Se borraría:");
@@ -92,8 +89,7 @@ try {
       if (!keepCatalogs) {
         await tx.office.deleteMany();
         await tx.specialty.deleteMany();
-        await tx.occupationalStudy.deleteMany();
-        await tx.coverage.deleteMany({ where: { isOccupational: false } });
+        await tx.coverage.deleteMany();
       }
       await tx.rateLimitHit.deleteMany();
       await tx.auditLog.deleteMany();

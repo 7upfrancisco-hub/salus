@@ -27,10 +27,9 @@ export default async function DayAgendaPage({ searchParams }: PageProps<"/agenda
   const user = await requireStaff();
   const params = await searchParams;
 
-  const [professionals, settings, occupationalCoverages] = await Promise.all([
+  const [professionals, settings] = await Promise.all([
     getManageableProfessionals(user),
     db.centerSettings.findUnique({ where: { id: 1 } }),
-    db.coverage.count({ where: { isOccupational: true, active: true } }),
   ]);
   const today = todayInZone(settings?.timezone ?? "America/Argentina/Buenos_Aires");
 
@@ -84,11 +83,6 @@ export default async function DayAgendaPage({ searchParams }: PageProps<"/agenda
         <a href={`/agenda/descargar?profesional=${professional.id}&fecha=${date}`} className={secondaryButtonClass}>
           Descargar agenda del día (PDF)
         </a>
-        {occupationalCoverages > 0 && (
-          <a href={`/agenda/descargar?tipo=preocupacional&fecha=${date}`} className={secondaryButtonClass}>
-            Descargar preocupacionales del día (PDF)
-          </a>
-        )}
       </div>
 
       {!view || !day ? (
@@ -217,8 +211,6 @@ function AppointmentRow({ row, now }: { row: Extract<AgendaRow, { kind: "appoint
           <div><dt className="inline text-zinc-500">Teléfono: </dt><dd className="inline">{a.phone}</dd></div>
           {a.email && <div><dt className="inline text-zinc-500">Email: </dt><dd className="inline">{a.email}</dd></div>}
           {a.affiliateNumber && <div><dt className="inline text-zinc-500">Afiliado: </dt><dd className="inline">{a.affiliateNumber}</dd></div>}
-          {a.studyName && <div><dt className="inline text-zinc-500">Estudio: </dt><dd className="inline">{a.studyName}</dd></div>}
-          {a.company && <div><dt className="inline text-zinc-500">Empresa: </dt><dd className="inline">{a.company}</dd></div>}
           <div><dt className="inline text-zinc-500">Tipo: </dt><dd className="inline">{VISIT_TYPE_LABEL[a.visitType] ?? a.visitType}</dd></div>
           {a.officeName && <div><dt className="inline text-zinc-500">Consultorio: </dt><dd className="inline">{a.officeName}</dd></div>}
           <div><dt className="inline text-zinc-500">Reservado: </dt><dd className="inline">{a.source === "PUBLIC" ? "online por el paciente" : `por ${a.createdByName ?? "secretaría"}`}</dd></div>
