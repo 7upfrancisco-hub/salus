@@ -103,7 +103,7 @@ Pendiente de este tema: el centro tiene que cargar sus 3 estudios reales y crear
 
 ## Pendientes / próximos pasos
 
-- **Actualizar Next.js (seguridad)**: `npm audit` marca `next` 16.0.0–16.4.0 con avisos críticos (RCE en optimización de imágenes con SVG, DoS en Server Actions, RCE en `use cache`); el arreglo está en 16.4.3. El proyecto fija `16.4.0` exacto. Probar con la suite completa antes de subir.
+- **Hecho el 2026-10-23: Next.js 16.4.0 → 16.4.3** (fijada exacta, junto con `eslint-config-next`) por avisos críticos de `npm audit` (RCE en optimización de imágenes con SVG, DoS en Server Actions, RCE en `use cache`); además `zod` 4.6.5 → 4.6.7 (memoria con colecciones enormes). Verificado con tsc, eslint, 69 tests, `check:reservas`, build y `check:ui` (93, dos corridas). Quedan 4 avisos altos de `npm audit` en `prisma` / `@prisma/config` / `deepmerge-ts` / `mysql2` (herramientas de Prisma; no se usa MySQL ni se mezclan configs con datos de usuarios); el arreglo es `prisma` 7.10.1, fuera del rango fijado: evaluarlo junto con `@prisma/client`.
 
 - Revocar el token de Vercel que se usó para el deploy (se pegó en el chat).
 - Mails a pacientes: en pausa hasta presentarle la propuesta al centro y que acepten pagar el dominio (~USD 10/año). Con el dominio: verificarlo en Resend y cargar `RESEND_API_KEY` + `MAIL_FROM` en Vercel. Mientras tanto los mails quedan en cola. Alternativa sin dominio (peor entrega): Brevo o SMTP de Gmail, requiere cambiar `mail.ts`.
