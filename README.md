@@ -19,6 +19,16 @@ Usuarios de ejemplo (**solo desarrollo**: las contraseñas están en el código 
 datos reales; ver `SEED_DEMO` más abajo). Salen del seed: `admin@salus.local` / `admin1234`,
 `secretaria@salus.local` / `secretaria1234`, `perez@salus.local` / `perez1234`.
 
+### Datos de demostración (para mostrar el sistema)
+
+`SEED_DEMO=1 npm run db:seed` carga profesionales, coberturas, reglas y estudios de ejemplo (solo si todavía no hay profesionales).
+Dos variables más, pensadas para mostrar el sistema en la base real sin dejar nada inseguro:
+
+- `SEED_DEMO_USERS=0`: no crea los usuarios de ejemplo (sus contraseñas están en el código público del seed).
+- `SEED_DEMO_APPOINTMENTS=1`: agrega pacientes y turnos ficticios en los próximos 10 días, para que la agenda y el PDF no estén vacíos.
+
+Antes de cargar datos reales, se borra todo con `scripts/limpiar-demo.mts` (borra también lo que se haya cargado a mano).
+
 ## Pruebas
 
 | Comando | Qué prueba |

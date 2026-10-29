@@ -64,6 +64,10 @@ Pendiente de este tema: el centro tiene que cargar sus 3 estudios reales y crear
 - `scripts/cambiar-usuario.mts`: cambia usuario y contraseña del administrador (o de `CURRENT_LOGIN`); los datos nuevos van por `NEW_LOGIN` / `NEW_PASSWORD`, nunca se guardan en el repo (es público). Deja `USER_LOGIN_CHANGED` en la auditoría, sin la contraseña.
 - Producción: el administrador se cambia con ese script contra Neon (el nombre nuevo no se anota acá porque el repo es público).
 
+## Datos de demostración en producción (2026-10-29)
+
+Para mostrar Salus al centro: `SEED_DEMO=1 SEED_DEMO_USERS=0 SEED_DEMO_APPOINTMENTS=1 npm run db:seed` contra Neon (con `DATABASE_URL` en la terminal). Carga 4 profesionales, coberturas, 9 reglas, 3 estudios, 21 pacientes ficticios (DNI 800000xx, mails @example.com) y ~43 turnos en los próximos 10 días (10 preocupacionales). **Sin usuarios de ejemplo** (contraseñas públicas) y **sin mails encolados**. Es repetible: si ya hay profesionales no hace nada; reutiliza coberturas, especialidades y consultorios existentes. El seed de demo ahora usa `upsert` para esos catálogos. Antes de usar datos reales hay que correr `limpiar-demo.mts --confirmar`, que borra también lo que se haya cargado a mano.
+
 ## Reglas de negocio acordadas
 
 - La semana va de lunes a domingo; el mes es de calendario.

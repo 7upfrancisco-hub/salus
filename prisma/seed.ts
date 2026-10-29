@@ -1,6 +1,7 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import bcrypt from "bcryptjs";
 import { PrismaClient } from "../src/generated/prisma/client";
+import { addDaysToDate, todayInZone, weekdayOf, zonedTimeToUtc } from "../src/lib/time";
 
 const connectionString = process.env.DIRECT_URL ?? process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL;
 if (!connectionString) throw new Error("Falta DATABASE_URL (cadena de conexión a PostgreSQL).");
@@ -38,24 +39,36 @@ async function seedCore() {
   console.log(`Administrador creado: ${email}`);
 }
 
-/** Datos de ejemplo para desarrollo. Nunca correr en producción. */
+/**
+ * Datos de ejemplo (profesionales, coberturas, reglas y estudios). Opciones por variable de entorno:
+ *   SEED_DEMO_USERS=0         no crea los usuarios de ejemplo (sus contraseñas están en este archivo, que es público):
+ *                             imprescindible si la base es la de producción.
+ *   SEED_DEMO_APPOINTMENTS=1  agrega pacientes y turnos ficticios en los próximos días, para mostrar la agenda y el PDF.
+ * Es repetible: las coberturas, especialidades y consultorios que ya existan se reutilizan.
+ */
 async function seedDemo() {
   if ((await db.professional.count()) > 0) {
     console.log("Ya hay profesionales cargados: no se agregan datos de ejemplo.");
     return;
   }
 
+  const coverage = (data: { name: string; isParticular?: boolean; sortOrder: number; color: string }) =>
+    db.coverage.upsert({ where: { name: data.name }, update: {}, create: data });
+  const specialty = (data: { name: string; minAgeYears?: number; maxAgeYears?: number }) =>
+    db.specialty.upsert({ where: { name: data.name }, update: {}, create: data });
+  const office = (name: string) => db.office.upsert({ where: { name }, update: {}, create: { name } });
+
   const [particular, pami, osde] = await Promise.all([
-    db.coverage.create({ data: { name: "Particular", isParticular: true, sortOrder: 0, color: "#0d9488" } }),
-    db.coverage.create({ data: { name: "PAMI", sortOrder: 1, color: "#2563eb" } }),
-    db.coverage.create({ data: { name: "OSDE", sortOrder: 2, color: "#ea580c" } }),
+    coverage({ name: "Particular", isParticular: true, sortOrder: 0, color: "#0d9488" }),
+    coverage({ name: "PAMI", sortOrder: 1, color: "#2563eb" }),
+    coverage({ name: "OSDE", sortOrder: 2, color: "#ea580c" }),
   ]);
 
   const [trauma, pedia, neuro, laboral] = await Promise.all([
-    db.specialty.create({ data: { name: "Traumatología" } }),
-    db.specialty.create({ data: { name: "Pediatría", minAgeYears: 0, maxAgeYears: 17 } }),
-    db.specialty.create({ data: { name: "Neurología" } }),
-    db.specialty.create({ data: { name: "Medicina laboral" } }),
+    specialty({ name: "Traumatología" }),
+    specialty({ name: "Pediatría", minAgeYears: 0, maxAgeYears: 17 }),
+    specialty({ name: "Neurología" }),
+    specialty({ name: "Medicina laboral" }),
   ]);
 
   // La cobertura "Preocupacional" la crea una migración (no es una obra social: ver Coverage.isOccupational).
@@ -81,13 +94,10 @@ async function seedDemo() {
         sortOrder: 2,
       },
     ],
+    skipDuplicates: true,
   });
 
-  const [c1, c2, c3] = await Promise.all([
-    db.office.create({ data: { name: "Consultorio 1" } }),
-    db.office.create({ data: { name: "Consultorio 2" } }),
-    db.office.create({ data: { name: "Consultorio 3" } }),
-  ]);
+  const [c1, c2, c3] = await Promise.all([office("Consultorio 1"), office("Consultorio 2"), office("Consultorio 3")]);
 
   const perez = await db.professional.create({ data: { name: "Dr. Pérez", licenseNumber: "MP 1001", specialtyId: trauma.id } });
   const gomez = await db.professional.create({ data: { name: "Dra. Gómez", licenseNumber: "MP 1002", specialtyId: pedia.id } });
@@ -159,28 +169,156 @@ async function seedDemo() {
   }
 
   // Usuarios de ejemplo: un usuario de secretaría con dos profesionales y un profesional con su propio acceso.
-  const secretary = await db.user.create({
-    data: {
-      email: "secretaria@salus.local",
-      name: "Secretaría de ejemplo",
-      role: "SECRETARY",
-      passwordHash: await bcrypt.hash("secretaria1234", 12),
-    },
-  });
-  await db.userProfessionalAccess.createMany({
-    data: [perez, gomez].map((p) => ({ userId: secretary.id, professionalId: p.id })),
-  });
-  await db.user.create({
-    data: {
-      email: "perez@salus.local",
-      name: "Dr. Pérez",
-      role: "PROFESSIONAL",
-      passwordHash: await bcrypt.hash("perez1234", 12),
-      professional: { connect: { id: perez.id } },
-    },
-  });
+  // Sus contraseñas son públicas (están en este archivo): en producción se omiten con SEED_DEMO_USERS=0.
+  const withUsers = process.env.SEED_DEMO_USERS !== "0";
+  if (withUsers) {
+    const secretary = await db.user.create({
+      data: {
+        email: "secretaria@salus.local",
+        name: "Secretaría de ejemplo",
+        role: "SECRETARY",
+        passwordHash: await bcrypt.hash("secretaria1234", 12),
+      },
+    });
+    await db.userProfessionalAccess.createMany({
+      data: [perez, gomez].map((p) => ({ userId: secretary.id, professionalId: p.id })),
+    });
+    await db.user.create({
+      data: {
+        email: "perez@salus.local",
+        name: "Dr. Pérez",
+        role: "PROFESSIONAL",
+        passwordHash: await bcrypt.hash("perez1234", 12),
+        professional: { connect: { id: perez.id } },
+      },
+    });
+  }
 
-  console.log("Datos de ejemplo cargados (4 profesionales, 4 coberturas con Preocupacional, 9 reglas, 3 estudios, 2 usuarios).");
+  let appointments = 0;
+  if (process.env.SEED_DEMO_APPOINTMENTS === "1") {
+    appointments = await seedDemoAppointments({
+      professionals: { perez, gomez, ruiz, medina },
+      offices: { perez: c1, gomez: c2, ruiz: c3, medina: c1 },
+      coverages: { particular, pami, osde, preocupacional },
+    });
+  }
+
+  console.log(
+    `Datos de ejemplo cargados (4 profesionales, 4 coberturas con Preocupacional, 9 reglas, 3 estudios, ${withUsers ? "2 usuarios" : "sin usuarios de ejemplo"}, ${appointments} turnos).`,
+  );
+}
+
+type Id = { id: string };
+type DemoContext = {
+  professionals: Record<"perez" | "gomez" | "ruiz" | "medina", Id>;
+  offices: Record<"perez" | "gomez" | "ruiz" | "medina", Id>;
+  coverages: Record<"particular" | "pami" | "osde" | "preocupacional", Id>;
+};
+
+/**
+ * Pacientes y turnos ficticios en los próximos 10 días, solo en los días y horarios en que cada profesional
+ * atiende (los mismos del seed). Se insertan directo, sin pasar por el motor, y no encolan mails.
+ * Los DNI (800000xx) y los mails (@example.com) son inventados.
+ */
+async function seedDemoAppointments(ctx: DemoContext) {
+  const settings = await db.centerSettings.findUnique({ where: { id: 1 } });
+  const timezone = settings?.timezone ?? "America/Argentina/Buenos_Aires";
+  const today = todayInZone(timezone);
+  const studies = await db.occupationalStudy.findMany({ orderBy: { sortOrder: "asc" } });
+
+  const adults: [string, string, string][] = [
+    ["Lucía", "Fernández", "1984-03-12"], ["Martín", "Gómez", "1979-11-02"], ["Carolina", "Rossi", "1991-07-25"],
+    ["Diego", "Benítez", "1968-01-30"], ["Valeria", "Acosta", "1987-09-14"], ["Sergio", "Molina", "1975-05-08"],
+    ["Norma", "Quiroga", "1952-12-19"], ["Héctor", "Sosa", "1949-04-03"], ["Alicia", "Peralta", "1956-08-21"],
+    ["Raúl", "Domínguez", "1961-06-17"], ["Paula", "Ibarra", "1993-02-27"], ["Nicolás", "Herrera", "1988-10-09"],
+  ];
+  const kids: [string, string, string][] = [["Mateo", "Álvarez", "2018-05-20"], ["Sofía", "Ledesma", "2015-09-03"], ["Joaquín", "Navarro", "2020-01-15"]];
+  const workers: [string, string, string][] = [
+    ["Facundo", "Ríos", "1996-03-30"], ["Gabriela", "Luna", "1990-06-11"], ["Jorge", "Medina", "1985-12-05"],
+    ["Natalia", "Cabrera", "1999-08-18"], ["Pablo", "Ortiz", "1982-04-22"], ["Romina", "Vega", "1994-10-27"],
+  ];
+  const pools = { adults, kids, workers };
+
+  const everyone = [...adults, ...kids, ...workers];
+  await db.patient.createMany({
+    data: everyone.map(([firstName, lastName, birthDate], i) => ({
+      dni: `800000${String(i + 1).padStart(2, "0")}`,
+      firstName,
+      lastName,
+      birthDate,
+      email: `ejemplo${i + 1}@example.com`,
+      phone: `11 5555 ${String(1000 + i).padStart(4, "0")}`,
+    })),
+    skipDuplicates: true,
+  });
+  const patients = await db.patient.findMany({ where: { dni: { startsWith: "800000" } }, orderBy: { dni: "asc" } });
+  const pick = (pool: keyof typeof pools, n: number) => {
+    const offset = pool === "adults" ? 0 : pool === "kids" ? adults.length : adults.length + kids.length;
+    return patients[offset + (n % pools[pool].length)];
+  };
+
+  const SLOT = { perez: 20, gomez: 30, ruiz: 30, medina: 20 } as const;
+  type Plan = {
+    pro: keyof typeof SLOT;
+    days: number[];
+    at: number;
+    coverage: keyof DemoContext["coverages"];
+    pool: keyof typeof pools;
+    patient: number;
+    confirmed?: boolean;
+    control?: boolean;
+    study?: number;
+    company?: string;
+  };
+  const plans: Plan[] = [
+    // Dr. Pérez (lun, mié, vie)
+    { pro: "perez", days: [1, 3], at: hm(9), coverage: "pami", pool: "adults", patient: 6, confirmed: true },
+    { pro: "perez", days: [1, 3], at: hm(9, 20), coverage: "pami", pool: "adults", patient: 7 },
+    { pro: "perez", days: [5], at: hm(9), coverage: "osde", pool: "adults", patient: 2 },
+    { pro: "perez", days: [1, 3, 5], at: hm(9, 40), coverage: "osde", pool: "adults", patient: 3, control: true },
+    { pro: "perez", days: [1, 3, 5], at: hm(11), coverage: "particular", pool: "adults", patient: 4 },
+    { pro: "perez", days: [1, 3, 5], at: hm(11, 20), coverage: "particular", pool: "adults", patient: 5, confirmed: true },
+    // Dra. Gómez (pediatría, lun a jue)
+    { pro: "gomez", days: [1, 2, 3, 4], at: hm(14), coverage: "osde", pool: "kids", patient: 0, confirmed: true },
+    { pro: "gomez", days: [1, 2, 3, 4], at: hm(14, 30), coverage: "osde", pool: "kids", patient: 1 },
+    { pro: "gomez", days: [1, 3], at: hm(16), coverage: "particular", pool: "kids", patient: 2 },
+    // Dr. Ruiz (mar, jue)
+    { pro: "ruiz", days: [4], at: hm(8), coverage: "pami", pool: "adults", patient: 8 },
+    { pro: "ruiz", days: [4], at: hm(8, 30), coverage: "pami", pool: "adults", patient: 9 },
+    { pro: "ruiz", days: [2], at: hm(8), coverage: "osde", pool: "adults", patient: 10 },
+    { pro: "ruiz", days: [2, 4], at: hm(10), coverage: "particular", pool: "adults", patient: 11 },
+    // Dra. Medina (medicina laboral: preocupacionales, mar y jue)
+    { pro: "medina", days: [2, 4], at: hm(8), coverage: "preocupacional", pool: "workers", patient: 0, study: 0, company: "Constructora del Sur S.A." },
+    { pro: "medina", days: [2, 4], at: hm(8, 20), coverage: "preocupacional", pool: "workers", patient: 1, study: 1, company: "Constructora del Sur S.A.", confirmed: true },
+    { pro: "medina", days: [2, 4], at: hm(8, 40), coverage: "preocupacional", pool: "workers", patient: 2, study: 0, company: "Transportes Andinos S.R.L." },
+    { pro: "medina", days: [2, 4], at: hm(9), coverage: "preocupacional", pool: "workers", patient: 3, study: 2, company: "Transportes Andinos S.R.L." },
+    { pro: "medina", days: [2, 4], at: hm(9, 20), coverage: "preocupacional", pool: "workers", patient: 4, study: 1, company: "Frigorífico del Plata S.A." },
+  ];
+
+  const data = [];
+  for (let offset = 1; offset <= 10; offset += 1) {
+    const date = addDaysToDate(today, offset);
+    const weekday = weekdayOf(date);
+    for (const plan of plans.filter((p) => p.days.includes(weekday))) {
+      const startsAt = zonedTimeToUtc(date, plan.at, timezone);
+      data.push({
+        professionalId: ctx.professionals[plan.pro].id,
+        coverageId: ctx.coverages[plan.coverage].id,
+        patientId: pick(plan.pool, plan.patient + offset).id,
+        officeId: ctx.offices[plan.pro].id,
+        localDate: date,
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + SLOT[plan.pro] * 60_000),
+        status: plan.confirmed ? "CONFIRMED" : "RESERVED",
+        visitType: plan.control ? "CONTROL" : "FIRST",
+        source: plan.confirmed ? "STAFF" : "PUBLIC",
+        studyId: plan.study !== undefined ? (studies[plan.study]?.id ?? null) : null,
+        company: plan.company ?? null,
+      });
+    }
+  }
+  await db.appointment.createMany({ data });
+  return data.length;
 }
 
 async function main() {

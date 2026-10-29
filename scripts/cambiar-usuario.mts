@@ -71,6 +71,17 @@ try {
     });
   });
   console.log(`Listo: «${user.email}» ahora entra como «${newLogin.data}» con la contraseña nueva.`);
+
+  // Se vuelve a leer de la base para confirmar que quedó como se pidió (la contraseña nunca se imprime).
+  const saved = await db.user.findUnique({ where: { email: newLogin.data } });
+  const matches = saved ? await bcrypt.compare(password, saved.passwordHash) : false;
+  console.log(
+    saved && matches && saved.active
+      ? "Verificado en la base: el usuario existe, está activo y la contraseña coincide."
+      : "ATENCIÓN: no se pudo verificar el cambio en la base. Avisame.",
+  );
+  const admins = await db.user.findMany({ where: { role: "ADMIN" }, select: { email: true, active: true } });
+  console.log(`Administradores en esta base: ${admins.map((a) => `${a.email}${a.active ? "" : " (inactivo)"}`).join(", ")}`);
 } finally {
   await db.$disconnect();
 }
