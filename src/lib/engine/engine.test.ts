@@ -68,7 +68,7 @@ const agendaBlocks: Block[] = [1, 3, 5].map((weekday) => ({
 
 function input(overrides: Partial<EngineInput> = {}): EngineInput {
   return {
-    professional: { id: "perez", specialtyId: "trauma" },
+    professional: { id: "perez", specialtyIds: ["trauma"] },
     coverageId: "pami",
     visitType: "CONTROL",
     range: { from: MON, to: "2030-01-13" },
@@ -88,7 +88,7 @@ function appt(date: string, startMinutes: number, extra: Partial<ExistingAppoint
   return {
     id: `a${++seq}`,
     professionalId: "perez",
-    specialtyId: "trauma",
+    specialtyIds: ["trauma"],
     coverageId: "pami",
     startsAt: zonedTimeToUtc(date, startMinutes, TZ),
     endsAt: zonedTimeToUtc(date, startMinutes + 20, TZ),
@@ -357,8 +357,8 @@ describe("cupos", () => {
   describe("alcance del cupo", () => {
     const shared = (scope: Quota["scope"]) =>
       rule({ ...pamiRule, quotas: [{ id: "q-shared", period: "DAY", max: 1, scope, weekdays: null }] });
-    const otherDoctor = appt(MON, h(9), { professionalId: "otro", specialtyId: "trauma" });
-    const otherSpecialty = appt(MON, h(9), { professionalId: "neuro", specialtyId: "neurologia" });
+    const otherDoctor = appt(MON, h(9), { professionalId: "otro", specialtyIds: ["trauma"] });
+    const otherSpecialty = appt(MON, h(9), { professionalId: "neuro", specialtyIds: ["neurologia"] });
 
     it("por profesional: lo que atiende otro profesional no cuenta", () => {
       expect(free(input({ rules: [shared("PROFESSIONAL")], appointments: [otherDoctor] }), MON)).toHaveLength(6);
@@ -458,21 +458,58 @@ describe("rango de edad de la especialidad", () => {
   const pediatrics = { minAgeYears: 0, maxAgeYears: 17 };
 
   it("acepta a un menor de 18 y rechaza a quien ya cumplió 18", () => {
-    const minor = input({ specialty: pediatrics, patient: { birthDate: "2012-01-08" } }); // 17 años
-    const adult = input({ specialty: pediatrics, patient: { birthDate: "2012-01-07" } }); // cumple 18 el lunes
+    const minor = input({ specialties: [pediatrics], patient: { birthDate: "2012-01-08" } }); // 17 años
+    const adult = input({ specialties: [pediatrics], patient: { birthDate: "2012-01-07" } }); // cumple 18 el lunes
     expect(free(minor, MON)).toHaveLength(6);
     expect(free(adult, MON)).toEqual([]);
     expect(statusAt(adult, MON, h(9))).toBe("AGE");
   });
 
   it("evalúa la edad a la fecha de cada turno (cumple 18 durante la semana)", () => {
-    const inp = input({ specialty: pediatrics, patient: { birthDate: "2012-01-08" } });
+    const inp = input({ specialties: [pediatrics], patient: { birthDate: "2012-01-08" } });
     expect(free(inp, MON)).toHaveLength(6); // 17 años
     expect(free(inp, WED)).toEqual([]); // ya cumplió 18
   });
 
   it("sin datos del paciente no se valida la edad", () => {
-    expect(free(input({ specialty: pediatrics }), MON)).toHaveLength(6);
+    expect(free(input({ specialties: [pediatrics] }), MON)).toHaveLength(6);
+  });
+
+  it("con varias especialidades alcanza con que una admita la edad", () => {
+    const sinLimite = { minAgeYears: null, maxAgeYears: null };
+    const adult = { patient: { birthDate: "1990-01-01" } };
+    expect(free(input({ specialties: [pediatrics], ...adult }), MON)).toEqual([]);
+    expect(free(input({ specialties: [pediatrics, sinLimite], ...adult }), MON)).toHaveLength(6);
+  });
+});
+
+describe("profesional con más de una especialidad", () => {
+  const sharedRule = (specialtyId: string) =>
+    rule({
+      id: `r-${specialtyId}`,
+      coverageId: "swiss",
+      professionalId: null,
+      specialtyId,
+      windows: [{ weekday: 1, startMinutes: h(9), endMinutes: h(11) }],
+    });
+  const twoSpecialties = { id: "perez", specialtyIds: ["trauma", "laboral"] };
+
+  it("aplica la regla de cualquiera de sus especialidades", () => {
+    expect(free(input({ professional: twoSpecialties, coverageId: "swiss", rules: [sharedRule("laboral")] }), MON)).toHaveLength(6);
+    expect(free(input({ professional: twoSpecialties, coverageId: "swiss", rules: [sharedRule("trauma")] }), MON)).toHaveLength(6);
+  });
+
+  it("no aplica la regla de una especialidad que no atiende", () => {
+    expect(free(input({ professional: twoSpecialties, coverageId: "swiss", rules: [sharedRule("neurologia")] }), MON)).toEqual([]);
+  });
+
+  it("el cupo compartido por especialidad cuenta los turnos de colegas de cualquiera de ellas", () => {
+    const shared: Quota = { id: "q-shared", period: "DAY", max: 1, scope: "SPECIALTY", weekdays: null };
+    const rules = [{ ...sharedRule("trauma"), quotas: [shared] }];
+    const colleagueInLaboral = appt(MON, h(9), { professionalId: "otro", specialtyIds: ["laboral"], coverageId: "swiss" });
+    expect(free(input({ professional: twoSpecialties, coverageId: "swiss", rules, appointments: [colleagueInLaboral] }), MON)).toEqual([]);
+    const colleagueElsewhere = appt(MON, h(9), { professionalId: "otro", specialtyIds: ["neurologia"], coverageId: "swiss" });
+    expect(free(input({ professional: twoSpecialties, coverageId: "swiss", rules, appointments: [colleagueElsewhere] }), MON)).toHaveLength(6);
   });
 });
 

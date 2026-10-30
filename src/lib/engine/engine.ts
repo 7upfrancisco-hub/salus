@@ -76,7 +76,8 @@ export function resolveRule<R extends Pick<Rule, "coverageId" | "professionalId"
     (r) =>
       r.coverageId === coverageId &&
       r.professionalId === null &&
-      r.specialtyId === professional.specialtyId,
+      r.specialtyId !== null &&
+      professional.specialtyIds.includes(r.specialtyId),
   );
   return shared?.active ? shared : null;
 }
@@ -90,10 +91,12 @@ function blockAppliesOn(block: Block, date: string) {
 
 function ageViolation(input: EngineInput, date: string) {
   const birthDate = input.patient?.birthDate;
-  const range = input.specialty;
-  if (!birthDate || !range) return false;
+  const ranges = input.specialties;
+  if (!birthDate || !ranges || ranges.length === 0) return false;
   const age = ageInYears(birthDate, date);
-  return (range.minAgeYears !== null && age < range.minAgeYears) || (range.maxAgeYears !== null && age > range.maxAgeYears);
+  const admits = (r: { minAgeYears: number | null; maxAgeYears: number | null }) =>
+    (r.minAgeYears === null || age >= r.minAgeYears) && (r.maxAgeYears === null || age <= r.maxAgeYears);
+  return !ranges.some(admits);
 }
 
 export function evaluarAgenda(input: EngineInput): AgendaEvaluation {
@@ -250,7 +253,7 @@ function sameScope(quota: Quota, appointment: ExistingAppointment, professional:
     case "PROFESSIONAL":
       return appointment.professionalId === professional.id;
     case "SPECIALTY":
-      return appointment.specialtyId === professional.specialtyId;
+      return appointment.specialtyIds.some((id) => professional.specialtyIds.includes(id));
     case "CENTER":
       return true;
   }

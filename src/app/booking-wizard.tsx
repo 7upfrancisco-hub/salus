@@ -464,6 +464,7 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
 
           <form action={bookingAction} className="space-y-4">
             <input type="hidden" name="coverageId" value={coverage.id} />
+            {specialty && <input type="hidden" name="specialtyId" value={specialty.id} />}
             <input type="hidden" name="professionalId" value={choice.slot.professionalId} />
             <input type="hidden" name="date" value={choice.date} />
             <input type="hidden" name="startMinutes" value={choice.slot.startMinutes} />

@@ -15,23 +15,26 @@ const professionalSchema = z.object({
   id: z.string().optional(),
   name: z.string().trim().min(3, "Ingresá el nombre del profesional").max(80),
   licenseNumber: z.string().trim().max(40).optional(),
-  specialtyId: z.string().min(1, "Elegí la especialidad"),
+  specialtyIds: z.array(z.string().min(1)).min(1, "Elegí al menos una especialidad"),
   onlineBooking: checkbox,
   active: checkbox,
 });
 
 export async function saveProfessional(_prev: FormState, formData: FormData): Promise<FormState> {
   const user = await requireAdmin();
-  const parsed = professionalSchema.safeParse(Object.fromEntries(formData));
+  const parsed = professionalSchema.safeParse({ ...Object.fromEntries(formData), specialtyIds: formData.getAll("specialtyIds") });
   if (!parsed.success) return failed(summarize(fieldErrors(parsed.error)));
-  const { id, licenseNumber, ...rest } = parsed.data;
+  const { id, licenseNumber, specialtyIds, ...rest } = parsed.data;
   const data = { ...rest, licenseNumber: licenseNumber || null };
 
-  if (!(await db.specialty.findUnique({ where: { id: data.specialtyId }, select: { id: true } }))) return failed("La especialidad no existe.");
+  if ((await db.specialty.count({ where: { id: { in: specialtyIds } } })) !== new Set(specialtyIds).size) return failed("Alguna especialidad no existe.");
+  const specialties = [...new Set(specialtyIds)].map((specialtyId) => ({ id: specialtyId }));
 
   await db.$transaction(async (tx) => {
-    const row = id ? await tx.professional.update({ where: { id }, data }) : await tx.professional.create({ data });
-    await audit({ userId: user.id, action: id ? "PROFESSIONAL_UPDATED" : "PROFESSIONAL_CREATED", entity: "Professional", entityId: row.id, details: data }, tx);
+    const row = id
+      ? await tx.professional.update({ where: { id }, data: { ...data, specialties: { set: specialties } } })
+      : await tx.professional.create({ data: { ...data, specialties: { connect: specialties } } });
+    await audit({ userId: user.id, action: id ? "PROFESSIONAL_UPDATED" : "PROFESSIONAL_CREATED", entity: "Professional", entityId: row.id, details: { ...data, specialtyIds } }, tx);
   });
 
   revalidatePath("/configuracion/profesionales");

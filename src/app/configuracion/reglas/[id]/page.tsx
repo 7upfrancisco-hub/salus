@@ -8,6 +8,7 @@ import { QUOTA_SCOPE } from "@/lib/constants";
 import { db } from "@/lib/db";
 import { DeleteRuleButton } from "../delete-rule-button";
 import { RuleEditor, type RuleData } from "../rule-editor";
+import { specialtyNames } from "@/lib/specialties";
 
 export const metadata: Metadata = { title: "Regla por cobertura" };
 
@@ -68,7 +69,7 @@ export default async function RuleEditPage({ params, searchParams }: PageProps<"
 
   const specialties = global ? await db.specialty.findMany({ where: { active: true }, orderBy: { name: "asc" } }) : [];
   const targets = [
-    ...professionals.map((p) => ({ value: `p:${p.id}`, label: `${p.name} (${p.specialty.name})`, group: "Un profesional" })),
+    ...professionals.map((p) => ({ value: `p:${p.id}`, label: `${p.name} (${specialtyNames(p)})`, group: "Un profesional" })),
     ...specialties.map((s) => ({ value: `s:${s.id}`, label: `Todos los de ${s.name}`, group: "Toda la especialidad" })),
   ];
 

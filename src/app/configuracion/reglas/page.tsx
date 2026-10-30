@@ -6,13 +6,14 @@ import { getManageableProfessionals } from "@/lib/access";
 import { isGlobalEditor, requireConfigUser } from "@/lib/config-access";
 import { db } from "@/lib/db";
 import { summarizeQuotas, summarizeWindows } from "@/lib/rule-summary";
+import { specialtyNames } from "@/lib/specialties";
 
 export const metadata: Metadata = { title: "Reglas por cobertura" };
 
 export default async function RulesPage() {
   const user = await requireConfigUser();
   const professionals = await getManageableProfessionals(user);
-  const specialtyIds = [...new Set(professionals.map((p) => p.specialtyId))];
+  const specialtyIds = [...new Set(professionals.flatMap((p) => p.specialties.map((s) => s.id)))];
 
   const [rules, coverages] = await Promise.all([
     db.coverageRule.findMany({
@@ -46,14 +47,14 @@ export default async function RulesPage() {
         <div className="space-y-6">
           {professionals.map((professional) => {
             const own = rules.filter((r) => r.professionalId === professional.id);
-            const inherited = rules.filter((r) => r.specialtyId === professional.specialtyId && !own.some((o) => o.coverageId === r.coverageId));
+            const inherited = rules.filter((r) => r.specialtyId !== null && professional.specialties.some((s) => s.id === r.specialtyId) && !own.some((o) => o.coverageId === r.coverageId));
             const covered = new Set([...own, ...inherited].map((r) => r.coverageId));
             const missing = coverages.filter((c) => !covered.has(c.id));
 
             return (
               <section key={professional.id} className="rounded-2xl border border-zinc-200 p-5 dark:border-zinc-800">
                 <h2 className="text-lg font-semibold">
-                  {professional.name} <span className="text-sm font-normal text-zinc-500">· {professional.specialty.name}</span>
+                  {professional.name} <span className="text-sm font-normal text-zinc-500">· {specialtyNames(professional)}</span>
                 </h2>
 
                 {own.length + inherited.length === 0 ? (

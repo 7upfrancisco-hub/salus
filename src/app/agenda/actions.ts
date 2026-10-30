@@ -148,7 +148,7 @@ export async function createStaffAppointment(_prev: StaffBookingState, formData:
 /** Especialidades de las que puede ver la lista de espera quien está logueado. */
 export async function manageableSpecialtyIds(user: { id: string; role: string; manageAll: boolean }) {
   const professionals = await getManageableProfessionals(user);
-  return [...new Set(professionals.map((p) => p.specialtyId))];
+  return [...new Set(professionals.flatMap((p) => p.specialties.map((s) => s.id)))];
 }
 
 const waitlistStatusSchema = z.enum([WAITLIST_STATUS.WAITING, WAITLIST_STATUS.BOOKED, WAITLIST_STATUS.CANCELLED]);

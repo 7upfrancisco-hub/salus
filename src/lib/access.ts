@@ -19,22 +19,22 @@ export async function getManageableProfessionals(user: AccessUser) {
   if (user.role === ROLES.ADMIN || user.manageAll) {
     return db.professional.findMany({
       where: base,
-      orderBy: [{ specialty: { name: "asc" } }, { name: "asc" }],
-      include: { specialty: true },
+      orderBy: { name: "asc" },
+      include: { specialties: true },
     });
   }
 
   if (user.role === ROLES.SECRETARY) {
     return db.professional.findMany({
       where: { ...base, access: { some: { userId: user.id } } },
-      orderBy: [{ specialty: { name: "asc" } }, { name: "asc" }],
-      include: { specialty: true },
+      orderBy: { name: "asc" },
+      include: { specialties: true },
     });
   }
 
   return db.professional.findMany({
     where: { ...base, userId: user.id },
-    include: { specialty: true },
+    include: { specialties: true },
   });
 }
 

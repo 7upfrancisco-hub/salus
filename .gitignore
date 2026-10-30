@@ -44,3 +44,6 @@ next-env.d.ts
 *.db
 *.db-journal
 /src/generated
+
+# datos reales del centro (el repo es público)
+/scripts/datos/

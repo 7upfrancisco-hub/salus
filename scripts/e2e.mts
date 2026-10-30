@@ -342,6 +342,43 @@ try {
     await page.context().close();
   }
 
+  console.log("\nAdministración: profesionales con varias especialidades");
+  {
+    const page = await (await browser.newContext({ viewport: { width: 1280, height: 1000 } })).newPage();
+    page.setDefaultTimeout(30_000);
+    await login(page, "admin@salus.local", "admin1234");
+    await page.goto(`${BASE}/configuracion/profesionales`);
+    const createForm = page.locator("form", { has: page.locator("#pn-new") });
+
+    await page.locator("#pn-new").fill("Dr. E2E Sin Especialidad");
+    await createForm.getByRole("button", { name: "Agregar" }).click();
+    await page.getByText(/al menos una especialidad/).first().waitFor();
+    ok("no deja crear un profesional sin especialidad", (await db.professional.count({ where: { name: "Dr. E2E Sin Especialidad" } })) === 0);
+
+    await page.locator("#pn-new").fill("Dr. E2E Doble");
+    await page.locator("#pl-new").fill("99999");
+    await createForm.getByLabel("Traumatología", { exact: true }).check();
+    await createForm.getByLabel("Neurología", { exact: true }).check();
+    await createForm.getByRole("button", { name: "Agregar" }).click();
+    await page.getByText("Guardado ✓").first().waitFor();
+    const created = await db.professional.findFirstOrThrow({ where: { name: "Dr. E2E Doble" }, include: { specialties: true } });
+    ok("crea un profesional con dos especialidades", created.specialties.map((sp) => sp.name).sort().join(",") === "Neurología,Traumatología");
+
+    await page.goto(`${BASE}/configuracion/profesionales`);
+    const editForm = page.locator("form", { has: page.locator(`input[name="id"][value="${created.id}"]`) });
+    ok("al volver a abrirlo muestra las dos tildadas", (await editForm.getByLabel("Traumatología", { exact: true }).isChecked()) && (await editForm.getByLabel("Neurología", { exact: true }).isChecked()) && !(await editForm.getByLabel("Pediatría", { exact: true }).isChecked()));
+    await editForm.getByLabel("Neurología", { exact: true }).uncheck();
+    await editForm.getByLabel("Pediatría", { exact: true }).check();
+    await editForm.getByRole("button", { name: "Guardar" }).click();
+    await page.getByText("Guardado ✓").first().waitFor();
+    const edited = await db.professional.findUniqueOrThrow({ where: { id: created.id }, include: { specialties: true } });
+    ok("se le pueden cambiar las especialidades", edited.specialties.map((sp) => sp.name).sort().join(",") === "Pediatría,Traumatología");
+
+    await page.goto(`${BASE}/agenda`);
+    ok("la agenda lo muestra con todas sus especialidades", (await page.getByRole("link", { name: /Dr\. E2E Doble/ }).first().innerText()).includes("Pediatría / Traumatología"));
+    await page.context().close();
+  }
+
   console.log("\nAdministración: usuarios");
   {
     const page = await (await browser.newContext({ viewport: { width: 1280, height: 1000 } })).newPage();
@@ -486,6 +523,7 @@ try {
   await db.coverageRule.deleteMany({ where: { coverage: { name: "Obra Social E2E" } } });
   await db.coverage.deleteMany({ where: { name: "Obra Social E2E" } });
   await db.userProfessionalAccess.deleteMany({ where: { user: { email: "e2e.secretaria" } } });
+  await db.professional.deleteMany({ where: { name: { startsWith: "Dr. E2E " } } });
   await db.user.deleteMany({ where: { email: "e2e.secretaria" } });
   await db.appointment.deleteMany({ where: { patientId: { in: ids } } });
   await db.patient.deleteMany({ where: { id: { in: ids } } });

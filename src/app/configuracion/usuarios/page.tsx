@@ -16,7 +16,7 @@ export default async function UsersPage() {
   const admin = await requireAdmin();
   const [users, professionals] = await Promise.all([
     db.user.findMany({ orderBy: [{ active: "desc" }, { role: "asc" }, { name: "asc" }], include: { access: true, professional: true } }),
-    db.professional.findMany({ where: { active: true }, orderBy: { name: "asc" }, include: { specialty: true } }),
+    db.professional.findMany({ where: { active: true }, orderBy: { name: "asc" }, include: { specialties: true } }),
   ]);
 
   const accessChecks = (selected: string[], prefix: string) => (

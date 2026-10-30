@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ActionForm } from "@/components/action-form";
-import { Card, Check, Field, Select, TextInput } from "@/components/form-bits";
+import { Card, Check, Field, TextInput } from "@/components/form-bits";
 import { StaffShell } from "@/components/staff-shell";
 import { requireAdmin } from "@/lib/config-access";
 import { db } from "@/lib/db";
@@ -12,25 +12,32 @@ export const metadata: Metadata = { title: "Profesionales" };
 export default async function ProfessionalsPage() {
   const user = await requireAdmin();
   const [professionals, specialties] = await Promise.all([
-    db.professional.findMany({ orderBy: [{ active: "desc" }, { name: "asc" }], include: { specialty: true } }),
+    db.professional.findMany({ orderBy: [{ active: "desc" }, { name: "asc" }], include: { specialties: true } }),
     db.specialty.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
   ]);
 
   const fields = (p?: (typeof professionals)[number]) => {
     const key = p?.id ?? "new";
+    const own = new Set(p?.specialties.map((s) => s.id));
+    // Las activas y, si el profesional ya tenía alguna que se desactivó después, esa también (para no perderla al guardar).
+    const options = [
+      ...specialties.map((s) => ({ id: s.id, name: s.name })),
+      ...(p?.specialties ?? []).filter((s) => !specialties.some((a) => a.id === s.id)).map((s) => ({ id: s.id, name: `${s.name} (inactiva)` })),
+    ];
     return (
       <>
         {p && <input type="hidden" name="id" value={p.id} />}
         <Field label="Nombre" htmlFor={`pn-${key}`}><TextInput id={`pn-${key}`} name="name" defaultValue={p?.name} required className="w-48" /></Field>
         <Field label="Matrícula" htmlFor={`pl-${key}`}><TextInput id={`pl-${key}`} name="licenseNumber" defaultValue={p?.licenseNumber ?? ""} className="w-32" /></Field>
-        <Field label="Especialidad" htmlFor={`ps-${key}`}>
-          <Select id={`ps-${key}`} name="specialtyId" defaultValue={p?.specialtyId ?? specialties[0]?.id} className="w-44">
-            {specialties.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
+        <fieldset className="w-72">
+          <legend className="mb-1 text-sm font-medium">Especialidades</legend>
+          <div className="max-h-32 space-y-1 overflow-y-auto rounded-lg border border-zinc-300 p-2 dark:border-zinc-700">
+            {options.map((s) => (
+              <Check key={s.id} name="specialtyIds" value={s.id} label={s.name} defaultChecked={own.has(s.id)} />
             ))}
-            {p && !specialties.some((s) => s.id === p.specialtyId) && <option value={p.specialtyId}>{p.specialty.name} (inactiva)</option>}
-          </Select>
-        </Field>
+          </div>
+          <p className="mt-1 text-xs text-zinc-500">Si atiende más de una, comparte la misma agenda en todas.</p>
+        </fieldset>
         <Check name="onlineBooking" label="Turnos online" hint="Si no, solo secretaría le da turnos" defaultChecked={p?.onlineBooking ?? true} />
         {p ? <Check name="active" label="Activo" defaultChecked={p.active} /> : <input type="hidden" name="active" value="on" />}
       </>

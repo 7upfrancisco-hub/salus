@@ -44,11 +44,10 @@ async function eligibleProfessionals(coverageId: string, specialtyId: string, on
     where: {
       active: true,
       onlineBooking: true,
-      specialty: { active: true },
-      specialtyId,
+      specialties: { some: { id: specialtyId, active: true } },
       ...(onlyProfessionalId ? { id: onlyProfessionalId } : {}),
     },
-    select: { id: true, name: true, specialtyId: true },
+    select: { id: true, name: true },
     orderBy: { name: "asc" },
   });
   if (professionals.length === 0) return { professionals: [], rules: [] };
@@ -65,7 +64,7 @@ async function eligibleProfessionals(coverageId: string, specialtyId: string, on
   });
 
   return {
-    professionals: professionals.filter((p) => resolveRule({ professional: p, coverageId, rules })),
+    professionals: professionals.filter((p) => resolveRule({ professional: { id: p.id, specialtyIds: [specialtyId] }, coverageId, rules })),
     rules,
   };
 }
@@ -120,6 +119,7 @@ export async function searchAvailability(params: {
       from,
       to,
       patientBirthDate: params.birthDate ?? null,
+      specialtyId: params.specialtyId,
     });
     if (!context) continue;
 

@@ -61,7 +61,8 @@ export type Exception = {
 export type ExistingAppointment = {
   id: string;
   professionalId: string;
-  specialtyId: string;
+  /** Las del profesional que lo atiende: puede tener más de una. */
+  specialtyIds: string[];
   coverageId: string;
   startsAt: Date;
   endsAt: Date;
@@ -70,7 +71,7 @@ export type ExistingAppointment = {
 };
 
 export type EngineInput = {
-  professional: { id: string; specialtyId: string };
+  professional: { id: string; specialtyIds: string[] };
   coverageId: string;
   visitType: VisitType;
   /** Rango de fechas a evaluar, ambos extremos incluidos. */
@@ -85,7 +86,11 @@ export type EngineInput = {
   limits: { minNoticeHours: number; horizonDays: number } | null;
   /** Si se informa, se valida el rango de edad de la especialidad a la fecha del turno. */
   patient?: { birthDate: string } | null;
-  specialty?: { minAgeYears: number | null; maxAgeYears: number | null };
+  /**
+   * Rangos de edad de las especialidades que cuentan para este turno. La edad es válida si alguno la admite
+   * (un profesional de varias especialidades atiende a quien entre en cualquiera de ellas).
+   */
+  specialties?: { minAgeYears: number | null; maxAgeYears: number | null }[];
   /** Para reprogramar o cambiar de cobertura: este turno no cuenta contra sí mismo. */
   excludeAppointmentId?: string | null;
 

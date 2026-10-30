@@ -6,14 +6,15 @@ import { resolveRule } from "@/lib/engine/engine";
 export async function getRequirements(professionalId: string, coverageId: string): Promise<string[]> {
   const professional = await db.professional.findUnique({
     where: { id: professionalId },
-    select: { id: true, specialtyId: true },
+    select: { id: true, specialties: { select: { id: true } } },
   });
   if (!professional) return [];
+  const specialtyIds = professional.specialties.map((s) => s.id);
 
   const rules = await db.coverageRule.findMany({
     where: {
       coverageId,
-      OR: [{ professionalId }, { professionalId: null, specialtyId: professional.specialtyId }],
+      OR: [{ professionalId }, { professionalId: null, specialtyId: { in: specialtyIds } }],
     },
     select: {
       coverageId: true,
@@ -24,6 +25,6 @@ export async function getRequirements(professionalId: string, coverageId: string
     },
   });
 
-  const rule = resolveRule({ professional, coverageId, rules });
+  const rule = resolveRule({ professional: { id: professional.id, specialtyIds }, coverageId, rules });
   return rule?.requirements.map((r) => r.text) ?? [];
 }

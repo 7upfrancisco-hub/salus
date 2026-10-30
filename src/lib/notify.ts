@@ -47,11 +47,11 @@ export async function enqueueCancellation(tx: Tx, appointmentId: string, email: 
 
 /**
  * Cuando se libera un turno, avisa a los primeros pacientes de la lista de espera que coinciden
- * (misma especialidad y cobertura, y ese profesional o "cualquiera"). Devuelve cuántos avisó.
+ * (alguna de sus especialidades y la misma cobertura, y ese profesional o "cualquiera"). Devuelve cuántos avisó.
  */
 export async function enqueueWaitlistMatches(
   tx: Tx,
-  freed: { professionalId: string; specialtyId: string; coverageId: string; startsAt: Date },
+  freed: { professionalId: string; specialtyIds: string[]; coverageId: string; startsAt: Date },
   maxToNotify = 3,
 ) {
   if (freed.startsAt <= new Date()) return 0;
@@ -59,7 +59,7 @@ export async function enqueueWaitlistMatches(
   const entries = await tx.waitlistEntry.findMany({
     where: {
       status: WAITLIST_STATUS.WAITING,
-      specialtyId: freed.specialtyId,
+      specialtyId: { in: freed.specialtyIds },
       coverageId: freed.coverageId,
       OR: [{ professionalId: null }, { professionalId: freed.professionalId }],
     },

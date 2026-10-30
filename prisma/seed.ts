@@ -72,9 +72,9 @@ async function seedDemo() {
 
   const [c1, c2, c3] = await Promise.all([office("Consultorio 1"), office("Consultorio 2"), office("Consultorio 3")]);
 
-  const perez = await db.professional.create({ data: { name: "Dr. Pérez", licenseNumber: "MP 1001", specialtyId: trauma.id } });
-  const gomez = await db.professional.create({ data: { name: "Dra. Gómez", licenseNumber: "MP 1002", specialtyId: pedia.id } });
-  const ruiz = await db.professional.create({ data: { name: "Dr. Ruiz", licenseNumber: "MP 1003", specialtyId: neuro.id } });
+  const perez = await db.professional.create({ data: { name: "Dr. Pérez", licenseNumber: "MP 1001", specialties: { connect: [{ id: trauma.id }] } } });
+  const gomez = await db.professional.create({ data: { name: "Dra. Gómez", licenseNumber: "MP 1002", specialties: { connect: [{ id: pedia.id }] } } });
+  const ruiz = await db.professional.create({ data: { name: "Dr. Ruiz", licenseNumber: "MP 1003", specialties: { connect: [{ id: neuro.id }] } } });
 
   // Capa 1: agenda base
   const blocks = (professionalId: string, officeId: string, days: number[], from: number, to: number, slot: number) =>

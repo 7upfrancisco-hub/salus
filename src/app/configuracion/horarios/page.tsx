@@ -5,6 +5,7 @@ import { getManageableProfessionals } from "@/lib/access";
 import { requireConfigUser } from "@/lib/config-access";
 import { db } from "@/lib/db";
 import { AgendaEditor } from "./agenda-editor";
+import { specialtyNames } from "@/lib/specialties";
 
 export const metadata: Metadata = { title: "Horarios de atención" };
 
@@ -48,7 +49,7 @@ export default async function SchedulePage({ searchParams }: PageProps<"/configu
               ))}
             </nav>
           )}
-          <h2 className="mb-3 text-lg font-semibold">{professional.name} · {professional.specialty.name}</h2>
+          <h2 className="mb-3 text-lg font-semibold">{professional.name} · {specialtyNames(professional)}</h2>
           <div className="max-w-3xl">
             <AgendaEditor
               key={professional.id}

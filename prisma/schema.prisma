@@ -126,8 +126,8 @@ model Professional {
   onlineBooking Boolean @default(true)
   createdAt     DateTime @default(now())
 
-  specialtyId String
-  specialty   Specialty @relation(fields: [specialtyId], references: [id], onDelete: Restrict)
+  /// Una persona puede atender más de una especialidad (comparte la misma agenda en todas).
+  specialties Specialty[]
 
   userId String? @unique
   user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
@@ -139,8 +139,6 @@ model Professional {
   allowances   OverbookAllowance[]
   appointments Appointment[]
   waitlist     WaitlistEntry[]
-
-  @@index([specialtyId])
 }
 
 // ─────────────────────────── Capa 1: agenda base ───────────────────────────

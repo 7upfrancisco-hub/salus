@@ -8,6 +8,7 @@ import { formatWhen } from "@/lib/email-templates";
 import { getRequirements } from "@/lib/requirements";
 import { APPOINTMENT_STATUS_LABEL } from "@/lib/status-labels";
 import { ManageButtons } from "./manage-buttons";
+import { specialtyNames } from "@/lib/specialties";
 
 export const metadata: Metadata = {
   title: "Mi turno",
@@ -27,7 +28,7 @@ export default async function MyAppointmentPage({ params }: PageProps<"/turno/[t
 
   const appointment = await db.appointment.findUnique({
     where: { manageToken: token },
-    include: { patient: true, professional: { include: { specialty: true } }, coverage: true, office: true },
+    include: { patient: true, professional: { include: { specialties: true } }, coverage: true, office: true },
   });
   if (!appointment) notFound();
 
@@ -61,7 +62,7 @@ export default async function MyAppointmentPage({ params }: PageProps<"/turno/[t
         <p className="text-lg font-semibold">{formatWhen(appointment.startsAt, timezone)} hs</p>
         <dl className="space-y-1 text-sm">
           <div className="flex gap-2"><dt className="w-28 text-zinc-500">Profesional</dt><dd>{appointment.professional.name}</dd></div>
-          <div className="flex gap-2"><dt className="w-28 text-zinc-500">Especialidad</dt><dd>{appointment.professional.specialty.name}</dd></div>
+          <div className="flex gap-2"><dt className="w-28 text-zinc-500">Especialidad</dt><dd>{specialtyNames(appointment.professional)}</dd></div>
           <div className="flex gap-2"><dt className="w-28 text-zinc-500">Cobertura</dt><dd>{appointment.coverage.name}</dd></div>
           {appointment.office && <div className="flex gap-2"><dt className="w-28 text-zinc-500">Consultorio</dt><dd>{appointment.office.name}</dd></div>}
           <div className="flex gap-2"><dt className="w-28 text-zinc-500">Paciente</dt><dd>{appointment.patient.firstName} {appointment.patient.lastName}</dd></div>

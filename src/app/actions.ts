@@ -88,6 +88,7 @@ const bookingSchema = z.object({
   professionalId: idSchema,
   date: z.iso.date(),
   startMinutes: z.coerce.number().int().min(0).max(1439),
+  specialtyId: idSchema.optional(),
   notes: z.string().trim().max(300).optional(),
   consent: consentSchema,
 });
@@ -122,6 +123,7 @@ export async function submitBooking(_prev: BookingState, formData: FormData): Pr
     patient: patient.data,
     notes: booking.data.notes || null,
     source: "PUBLIC",
+    specialtyId: booking.data.specialtyId ?? null,
   });
 
   if (!result.ok) {
@@ -181,7 +183,7 @@ export async function submitWaitlist(_prev: WaitlistState, formData: FormData): 
   let professionalId: string | null = null;
   if (entry.data.professionalId) {
     const professional = await db.professional.findFirst({
-      where: { id: entry.data.professionalId, specialtyId: specialty.id, active: true },
+      where: { id: entry.data.professionalId, specialties: { some: { id: specialty.id } }, active: true },
       select: { id: true },
     });
     if (!professional) return { error: "El profesional elegido no está disponible.", values };

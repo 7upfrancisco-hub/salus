@@ -1,7 +1,8 @@
 import Link from "next/link";
+import { specialtyNames } from "@/lib/specialties";
 import { addDaysToDate } from "@/lib/time";
 
-type Professional = { id: string; name: string; specialty: { name: string } };
+type Professional = { id: string; name: string; specialties: { name: string }[] };
 
 const chip = "rounded-full border px-3 py-1 text-sm transition";
 
@@ -37,7 +38,7 @@ export function AgendaToolbar({
                   : "border-zinc-300 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
               }`}
             >
-              {p.name} <span className="opacity-70">· {p.specialty.name}</span>
+              {p.name} <span className="opacity-70">· {specialtyNames(p)}</span>
             </Link>
           ))}
         </nav>

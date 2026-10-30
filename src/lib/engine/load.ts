@@ -16,6 +16,11 @@ export type ContextOptions = {
   from: string;
   to: string;
   patientBirthDate?: string | null;
+  /**
+   * Especialidad por la que se pide el turno. Si el profesional tiene varias, el límite de edad es el de esa;
+   * sin ella vale el de cualquiera de las suyas.
+   */
+  specialtyId?: string | null;
   /** Turno que se está reprogramando o cambiando de cobertura (no cuenta contra sí mismo). */
   excludeAppointmentId?: string | null;
   now?: Date;
@@ -33,7 +38,7 @@ export type InputOptions = {
 };
 
 export type EngineContext = {
-  professional: { id: string; name: string; specialtyId: string };
+  professional: { id: string; name: string; specialtyIds: string[] };
   settings: {
     timezone: string;
     minNoticeHours: number;
@@ -59,9 +64,11 @@ export async function loadEngineContext(options: ContextOptions): Promise<Engine
 
   const professional = await client.professional.findUnique({
     where: { id: professionalId },
-    include: { specialty: true },
+    include: { specialties: true },
   });
   if (!professional || !professional.active) return null;
+  const specialtyIds = professional.specialties.map((s) => s.id);
+  const ageRanges = professional.specialties.filter((s) => !options.specialtyId || s.id === options.specialtyId);
 
   const wide = widenRange(from, to);
 
@@ -71,7 +78,7 @@ export async function loadEngineContext(options: ContextOptions): Promise<Engine
     rules: () =>
       client.coverageRule.findMany({
         relationLoadStrategy: "join",
-        where: { OR: [{ professionalId }, { professionalId: null, specialtyId: professional.specialtyId }] },
+        where: { OR: [{ professionalId }, { professionalId: null, specialtyId: { in: specialtyIds } }] },
         include: {
           windows: true,
           quotas: true,
@@ -102,7 +109,7 @@ export async function loadEngineContext(options: ContextOptions): Promise<Engine
           endsAt: true,
           localDate: true,
           status: true,
-          professional: { select: { specialtyId: true } },
+          professional: { select: { specialties: { select: { id: true } } } },
         },
       }),
   };
@@ -135,15 +142,12 @@ export async function loadEngineContext(options: ContextOptions): Promise<Engine
   };
 
   const common = {
-    professional: { id: professional.id, specialtyId: professional.specialtyId },
+    professional: { id: professional.id, specialtyIds },
     range: { from, to },
     now: options.now ?? new Date(),
     timezone: resolved.timezone,
     patient: options.patientBirthDate ? { birthDate: options.patientBirthDate } : null,
-    specialty: {
-      minAgeYears: professional.specialty.minAgeYears,
-      maxAgeYears: professional.specialty.maxAgeYears,
-    },
+    specialties: ageRanges.map((s) => ({ minAgeYears: s.minAgeYears, maxAgeYears: s.maxAgeYears })),
     excludeAppointmentId: options.excludeAppointmentId ?? null,
     blocks: blocks.map((b) => ({
       id: b.id,
@@ -186,7 +190,7 @@ export async function loadEngineContext(options: ContextOptions): Promise<Engine
     appointments: appointments.map((a) => ({
       id: a.id,
       professionalId: a.professionalId,
-      specialtyId: a.professional.specialtyId,
+      specialtyIds: a.professional.specialties.map((s) => s.id),
       coverageId: a.coverageId,
       startsAt: a.startsAt,
       endsAt: a.endsAt,
@@ -196,7 +200,7 @@ export async function loadEngineContext(options: ContextOptions): Promise<Engine
   };
 
   return {
-    professional: { id: professional.id, name: professional.name, specialtyId: professional.specialtyId },
+    professional: { id: professional.id, name: professional.name, specialtyIds },
     settings: resolved,
     inputFor: ({ coverageId, visitType, audience }) => ({
       ...common,

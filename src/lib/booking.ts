@@ -46,6 +46,8 @@ export type BookInput = {
   actor?: Actor | null;
   /** Solo para el personal: saltear reglas dejando el motivo. */
   override?: { reason: string } | null;
+  /** Especialidad por la que se pide el turno (turnero online). Define el límite de edad si el profesional tiene varias. */
+  specialtyId?: string | null;
 };
 
 class Abort extends Error {
@@ -92,10 +94,14 @@ export async function bookAppointment(input: BookInput): Promise<BookResult> {
         from: date,
         to: date,
         patientBirthDate: input.patient.birthDate,
+        specialtyId: input.specialtyId,
         now,
         client: tx,
       });
       if (!context) throw fail("INVALID", "El profesional no está disponible.");
+      if (input.specialtyId && !context.professional.specialtyIds.includes(input.specialtyId)) {
+        throw fail("INVALID", "El profesional no atiende esa especialidad.");
+      }
 
       const existing = await tx.patient.findUnique({ where: { dni: input.patient.dni }, select: { id: true, birthDate: true } });
       if (existing && existing.birthDate !== input.patient.birthDate) {
@@ -160,7 +166,7 @@ export async function bookAppointment(input: BookInput): Promise<BookResult> {
       await tx.waitlistEntry.updateMany({
         where: {
           patientId: patientResult.patient.id,
-          specialtyId: context.professional.specialtyId,
+          specialtyId: input.specialtyId ?? { in: context.professional.specialtyIds },
           coverageId,
           status: { in: [WAITLIST_STATUS.WAITING, WAITLIST_STATUS.NOTIFIED] },
           OR: [{ professionalId: null }, { professionalId }],
@@ -230,7 +236,7 @@ export type SimpleResult = { ok: true } | { ok: false; message: string };
 export async function cancelAppointment(input: CancelInput): Promise<SimpleResult> {
   const appointment = await db.appointment.findFirst({
     where: input.token ? { manageToken: input.token } : { id: input.appointmentId ?? "" },
-    include: { patient: { select: { email: true } }, professional: { select: { specialtyId: true } } },
+    include: { patient: { select: { email: true } }, professional: { select: { specialties: { select: { id: true } } } } },
   });
   if (!appointment) return { ok: false, message: "No encontramos el turno." };
 
@@ -275,7 +281,7 @@ export async function cancelAppointment(input: CancelInput): Promise<SimpleResul
     await enqueueCancellation(tx, appointment.id, appointment.patient.email);
     await enqueueWaitlistMatches(tx, {
       professionalId: appointment.professionalId,
-      specialtyId: appointment.professional.specialtyId,
+      specialtyIds: appointment.professional.specialties.map((s) => s.id),
       coverageId: appointment.coverageId,
       startsAt: appointment.startsAt,
     });

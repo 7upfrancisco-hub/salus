@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import type { PdfAgenda } from "@/lib/agenda-pdf";
 import { APPOINTMENT_STATUS_LABEL, VISIT_TYPE_LABEL } from "@/lib/status-labels";
 import { capitalizeFirst, minutesToTime, utcToZoned } from "@/lib/time";
+import { specialtyNames } from "@/lib/specialties";
 
 /** Datos de las agendas del día que se descargan en PDF (la agenda de un médico). */
 
@@ -47,14 +48,14 @@ const observations = (a: Row) =>
 export async function doctorDayAgenda(params: { professionalId: string; date: string; generatedBy: string }) {
   const [{ centerName, timezone }, professional, appointments] = await Promise.all([
     settings(),
-    db.professional.findUniqueOrThrow({ where: { id: params.professionalId }, include: { specialty: true } }),
+    db.professional.findUniqueOrThrow({ where: { id: params.professionalId }, include: { specialties: true } }),
     dayAppointments(params.date, params.professionalId),
   ]);
 
   const pdf: PdfAgenda = {
     centerName,
     title: `Agenda del día · ${professional.name}`,
-    subtitle: `${professional.specialty.name} · ${dateLabel(params.date)} · ${plural(appointments.length)}`,
+    subtitle: `${specialtyNames(professional)} · ${dateLabel(params.date)} · ${plural(appointments.length)}`,
     columns: [
       { header: "Hora", width: 62 },
       { header: "Paciente", width: 140 },

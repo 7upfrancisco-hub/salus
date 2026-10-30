@@ -20,7 +20,7 @@ if (!professionalQuery || !coverageQuery) {
 
 // Búsqueda sin tildes ni mayúsculas: "perez" encuentra a "Dr. Pérez".
 const norm = (text: string) => text.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
-const professional = (await db.professional.findMany({ where: { active: true }, include: { specialty: true } })).find((p) =>
+const professional = (await db.professional.findMany({ where: { active: true }, include: { specialties: true } })).find((p) =>
   norm(p.name).includes(norm(professionalQuery)),
 );
 const coverage = (await db.coverage.findMany()).find((c) => norm(c.name).includes(norm(coverageQuery)));
@@ -44,7 +44,7 @@ if (!input) throw new Error("No se pudo armar la agenda");
 const { rule, days } = evaluarAgenda(input);
 const available = new Map(turnosDisponibles(input).days.map((d) => [d.date, d.slots]));
 
-console.log(`\n${professional.name} (${professional.specialty.name}) · ${coverage.name} · ${visit === "primera" ? "primera vez" : "control"}`);
+console.log(`\n${professional.name} (${professional.specialties.map((s) => s.name).join(" / ")}) · ${coverage.name} · ${visit === "primera" ? "primera vez" : "control"}`);
 if (!rule) console.log("Este profesional NO atiende esta cobertura (no hay regla).");
 else if (rule.requirements.length) console.log(`Requisitos: ${rule.requirements.join(" · ")}`);
 

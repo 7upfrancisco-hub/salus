@@ -10,6 +10,7 @@ import { loadEngineContext } from "@/lib/engine/load";
 import { OVERRIDABLE_STATUSES, SLOT_STATUS_LABEL } from "@/lib/status-labels";
 import { capitalizeFirst, minutesToTime } from "@/lib/time";
 import { StaffBookingForm, type CoverageOption } from "./staff-booking-form";
+import { specialtyNames } from "@/lib/specialties";
 
 export const metadata: Metadata = { title: "Dar turno" };
 
@@ -27,7 +28,7 @@ export default async function NewStaffAppointmentPage({ searchParams }: PageProp
 
   const [context, professional, coverages] = await Promise.all([
     loadEngineContext({ professionalId, from: date, to: date }),
-    db.professional.findUniqueOrThrow({ where: { id: professionalId }, include: { specialty: true } }),
+    db.professional.findUniqueOrThrow({ where: { id: professionalId }, include: { specialties: true } }),
     db.coverage.findMany({ where: { active: true }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }] }),
   ]);
 
@@ -62,7 +63,7 @@ export default async function NewStaffAppointmentPage({ searchParams }: PageProp
       </Link>
       <h1 className="mb-1 mt-2 text-2xl font-bold tracking-tight">Dar turno</h1>
       <p className="mb-6 text-sm text-zinc-500">
-        {professional.name} · {professional.specialty.name} · {dateText}, {minutesToTime(startMinutes)} hs
+        {professional.name} · {specialtyNames(professional)} · {dateText}, {minutesToTime(startMinutes)} hs
       </p>
 
       {!slotExists ? (

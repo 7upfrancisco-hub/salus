@@ -10,6 +10,7 @@ import { weekEnd, weekStart } from "@/lib/engine/periods";
 import { SLOT_STATUS } from "@/lib/engine/types";
 import { todayInZone } from "@/lib/time";
 import { AgendaToolbar } from "../toolbar";
+import { specialtyNames } from "@/lib/specialties";
 
 export const metadata: Metadata = { title: "Agenda semanal" };
 
@@ -49,7 +50,7 @@ export default async function WeekAgendaPage({ searchParams }: PageProps<"/agend
       <div className="mb-4">
         <h1 className="text-2xl font-bold tracking-tight">{professional.name}</h1>
         <p className="text-sm text-zinc-500">
-          {professional.specialty.name} · semana del {shortDate(from)} al {shortDate(to)}
+          {specialtyNames(professional)} · semana del {shortDate(from)} al {shortDate(to)}
         </p>
       </div>
 

@@ -12,6 +12,7 @@ import { SLOT_STATUS_LABEL, VISIT_TYPE_LABEL } from "@/lib/status-labels";
 import { capitalizeFirst, todayInZone } from "@/lib/time";
 import { AgendaToolbar } from "./toolbar";
 import { AppointmentActions } from "./appointment-actions";
+import { specialtyNames } from "@/lib/specialties";
 
 export const metadata: Metadata = { title: "Agenda del día" };
 
@@ -59,7 +60,7 @@ export default async function DayAgendaPage({ searchParams }: PageProps<"/agenda
         <div>
           <h1 className="text-2xl font-bold tracking-tight">{professional.name}</h1>
           <p className="text-sm text-zinc-500">
-            {professional.specialty.name} · {dateLabel(date)}
+            {specialtyNames(professional)} · {dateLabel(date)}
           </p>
         </div>
         <Link

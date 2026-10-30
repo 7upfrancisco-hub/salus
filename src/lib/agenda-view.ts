@@ -5,6 +5,7 @@ import { evaluarAgenda } from "@/lib/engine/engine";
 import { loadEngineContext } from "@/lib/engine/load";
 import { SLOT_STATUS, type QuotaCounter, type SlotStatus } from "@/lib/engine/types";
 import { addDaysToDate, utcToZoned } from "@/lib/time";
+import { specialtyNames } from "@/lib/specialties";
 
 /**
  * Modelo de datos de la agenda de secretaría. Cada horario libre muestra qué coberturas lo
@@ -72,7 +73,7 @@ export async function buildRangeView(professionalId: string, from: string, to: s
   if (!context) return null;
 
   const [professional, coverages, appointments, exceptions] = await Promise.all([
-    db.professional.findUniqueOrThrow({ where: { id: professionalId }, include: { specialty: true } }),
+    db.professional.findUniqueOrThrow({ where: { id: professionalId }, include: { specialties: true } }),
     db.coverage.findMany({ where: { active: true }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }] }),
     db.appointment.findMany({
       where: { professionalId, localDate: { gte: from, lte: to } },
@@ -193,7 +194,7 @@ export async function buildRangeView(professionalId: string, from: string, to: s
   }
 
   return {
-    professional: { id: professional.id, name: professional.name, specialtyName: professional.specialty.name },
+    professional: { id: professional.id, name: professional.name, specialtyName: specialtyNames(professional) },
     coverages: coverages.map(infoOf),
     days,
   };

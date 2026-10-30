@@ -11,6 +11,7 @@ import { loadEngineContext } from "../src/lib/engine/load";
 import { buildAgendaPdf } from "../src/lib/agenda-pdf";
 import { doctorDayAgenda } from "../src/lib/agenda-export";
 import { processPendingNotifications } from "../src/lib/notify";
+import { listProfessionalsFor, listSpecialtiesFor, searchAvailability } from "../src/lib/public";
 import { addDaysToDate, todayInZone, weekdayOf } from "../src/lib/time";
 
 let failures = 0;
@@ -139,7 +140,7 @@ try {
     data: {
       patientId: (await db.patient.create({ data: { dni: "90009999", firstName: "En", lastName: "Espera", birthDate: "1955-01-01", email: "espera@example.com", phone: "1122334455" } })).id,
       coverageId: pami.id,
-      specialtyId: perez.specialtyId,
+      specialtyId: (await db.specialty.findFirstOrThrow({ where: { professionals: { some: { id: perez.id } } } })).id,
     },
   });
   const w1id = w1.ok ? w1.appointment.id : "";
@@ -219,6 +220,41 @@ try {
   const friAfter = await doctorDayAgenda({ professionalId: perez.id, date: FRI, generatedBy: "Prueba" });
   check("un turno cancelado no figura en la agenda descargada", !!friCancelled?.ok && friAfter.count === friBefore);
 
+  console.log("\nProfesional con más de una especialidad");
+  const espNinos = await db.specialty.create({ data: { name: "Prueba Pediatría", minAgeYears: 0, maxAgeYears: 17 } });
+  const espLaboral = await db.specialty.create({ data: { name: "Prueba Laboral" } });
+  const dual = await db.professional.create({
+    data: { name: "Dr. Doble de Prueba", specialties: { connect: [{ id: espNinos.id }, { id: espLaboral.id }] } },
+  });
+  await db.agendaBlock.create({ data: { professionalId: dual.id, weekday: 1, startMinutes: 9 * 60, endMinutes: 13 * 60, slotMinutes: 20 } });
+  for (const sp of [espNinos, espLaboral]) {
+    await db.coverageRule.create({
+      data: { coverageId: osde.id, specialtyId: sp.id, windows: { create: [{ weekday: 1, startMinutes: 9 * 60, endMinutes: 13 * 60 }] } },
+    });
+  }
+  const specialtyNames = (await listSpecialtiesFor(osde.id)).map((s) => s.name);
+  check("el turnero lo ofrece en las dos especialidades", specialtyNames.includes("Prueba Pediatría") && specialtyNames.includes("Prueba Laboral"), specialtyNames.join(", "));
+  check(
+    "y aparece en la lista de profesionales de cada una",
+    (await listProfessionalsFor(osde.id, espNinos.id)).some((p) => p.id === dual.id) && (await listProfessionalsFor(osde.id, espLaboral.id)).some((p) => p.id === dual.id),
+  );
+  const adultSearch = (specialtyId: string) =>
+    searchAvailability({ coverageId: osde.id, specialtyId, professionalId: dual.id, visitType: "FIRST", birthDate: "1990-01-01" });
+  check("a un adulto no le ofrece horarios por la especialidad con límite de edad", (await adultSearch(espNinos.id)).days.length === 0);
+  check("pero sí por la otra especialidad del mismo profesional", (await adultSearch(espLaboral.id)).days.length > 0);
+
+  const adultBirth = { birthDate: "1990-01-01" };
+  const dualBook = (extra: Partial<BookInput>) =>
+    book({ professionalId: dual.id, coverageId: osde.id, date: MON, startMinutes: 10 * 60, ...extra });
+  const adultKids = await dualBook({ specialtyId: espNinos.id, patient: patient(adultBirth) });
+  check("un adulto no puede reservar por la especialidad con límite de edad", !adultKids.ok && adultKids.code === "SLOT_UNAVAILABLE", JSON.stringify(adultKids));
+  const adultLaboral = await dualBook({ specialtyId: espLaboral.id, patient: patient(adultBirth) });
+  check("pero sí por la otra", adultLaboral.ok, JSON.stringify(adultLaboral));
+  const dualChild = await dualBook({ specialtyId: espNinos.id, startMinutes: 10 * 60 + 20, patient: patient({ birthDate: "2018-05-20" }) });
+  check("un menor puede reservar por la especialidad pediátrica", dualChild.ok, JSON.stringify(dualChild));
+  const wrong = await dualBook({ specialtyId: (await db.specialty.findFirstOrThrow({ where: { name: "Traumatología" } })).id, startMinutes: 10 * 60 + 40, patient: patient(adultBirth) });
+  check("rechaza una especialidad que el profesional no atiende", !wrong.ok && wrong.code === "INVALID", JSON.stringify(wrong));
+
   console.log("\nMails (sin RESEND_API_KEY no se envía nada)");
   const result = await processPendingNotifications();
   check("procesa la cola sin errores y sin mandar mails reales", result.sent === 0 && result.failed === 0, JSON.stringify(result));
@@ -259,6 +295,10 @@ try {
   await db.notificationLog.deleteMany({ where: { OR: [{ appointment: { patientId: { in: ids } } }, { waitlistEntry: { patientId: { in: ids } } }] } });
   await db.waitlistEntry.deleteMany({ where: { patientId: { in: ids } } });
   await db.appointment.deleteMany({ where: { patientId: { in: ids } } });
+  await db.coverageRule.deleteMany({ where: { specialty: { name: { startsWith: "Prueba " } } } });
+  await db.agendaBlock.deleteMany({ where: { professional: { name: "Dr. Doble de Prueba" } } });
+  await db.professional.deleteMany({ where: { name: "Dr. Doble de Prueba" } });
+  await db.specialty.deleteMany({ where: { name: { startsWith: "Prueba " } } });
   await db.patient.deleteMany({ where: { id: { in: ids } } });
   await db.auditLog.deleteMany({ where: { createdAt: { gte: startedAt }, entity: { in: ["Appointment", "Patient"] } } });
   await db.$disconnect();

@@ -48,6 +48,19 @@ El centro decidió **no ofrecer turnos preocupacionales**: Salus es solo para at
 - Pruebas: 64 unitarias, `check:reservas` y `check:ui` (68 verificaciones) en verde contra un Postgres temporal.
 - Próximo paso acordado: el centro pasa la lista de profesionales reales para cargarlos.
 
+## Profesionales con varias especialidades y carga de la lista real (2026-10-30)
+
+El centro pasó la lista de profesionales (foto del cartel). El Dr. Ariel Gómez figura en dos especialidades (Medicina laboral y Ortopedia/Traumatología), así que un profesional ahora puede tener **varias especialidades**.
+
+- Modelo: `Professional.specialties` (muchos a muchos, tabla implícita `_ProfessionalToSpecialty`); se quitó `Professional.specialtyId`. Migración `20261030000000_profesional_varias_especialidades` copia las que ya había.
+- Una persona = **una sola agenda** compartida en todas sus especialidades. El paciente la encuentra por cualquiera de ellas.
+- Motor (`engine/`): la regla «de toda la especialidad» aplica si coincide con **alguna** de sus especialidades; el límite de edad se cumple si **alguna** lo admite; los cupos por especialidad cuentan turnos de colegas con alguna especialidad en común. La regla propia del profesional sigue pisando a las compartidas.
+- Reserva online: el formulario manda `specialtyId`; con él el límite de edad es el de esa especialidad (un adulto no reserva por Pediatría aunque el profesional también atienda otra). Pendiente conocido: el turno **no guarda** por qué especialidad se pidió (la pantalla del turno y la agenda muestran todas las del profesional); si hiciera falta, sumar `Appointment.specialtyId`.
+- Configuración → Profesionales: casillas para elegir varias (mínimo una). `lib/specialties.ts` (`specialtyNames`) las une con « / » en las pantallas.
+- Carga de la lista real: `scripts/cargar-profesionales.mts` lee `scripts/datos/profesionales.json` (**ignorado por git**: el repo es público y trae nombres y matrículas). Es repetible y solo agrega. Imágenes: Radiografía digital y Ecografía quedaron como dos especialidades («Diagnóstico por imágenes: …»).
+- Los profesionales se cargaron sin horarios ni reglas: no ofrecen turnos online hasta que se carguen desde Configuración (faltan días/horarios, duración, consultorio y coberturas con sus franjas).
+- Pruebas: 68 unitarias, `check:reservas` (con bloque de varias especialidades) y `check:ui` (79 verificaciones, 3 corridas seguidas) en verde contra un Postgres temporal.
+
 ## Acceso del personal (2026-10-23)
 
 - El login acepta un **usuario simple** (letras, números, `.`, `-`, `_`, 3 a 40) **o un email**; se guarda en la columna `User.email`. No distingue mayúsculas. Validación en `loginNameSchema` (`validation.ts`); Configuración → Usuarios también lo acepta al crear.
