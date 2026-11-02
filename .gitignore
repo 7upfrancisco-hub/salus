@@ -47,3 +47,6 @@ next-env.d.ts
 
 # datos reales del centro (el repo es público)
 /scripts/datos/
+
+# carpeta local de la CLI de Vercel
+.vercel

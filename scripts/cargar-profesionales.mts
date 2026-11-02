@@ -70,7 +70,7 @@ try {
     await tx.auditLog.create({
       data: { action: "PROFESSIONALS_IMPORTED", entity: "Professional", details: JSON.stringify({ created, updated, unchanged }) },
     });
-  });
+  }, { maxWait: 30_000, timeout: 120_000 }); // contra Neon el arranque de la transacción puede pasar los 2 s por defecto
   console.log(`\nListo: ${created} agregados, ${updated} actualizados, ${unchanged} ya estaban.`);
 } finally {
   await db.$disconnect();
