@@ -56,6 +56,7 @@ model User {
   professional Professional?
   access       UserProfessionalAccess[]
 
+  verifiedAccounts      PatientAccount[]    @relation("AccountVerifiedBy")
   createdAppointments   Appointment[]       @relation("AppointmentCreatedBy")
   cancelledAppointments Appointment[]       @relation("AppointmentCancelledBy")
   createdExceptions     ScheduleException[]
@@ -300,7 +301,50 @@ model Patient {
   appointments Appointment[]
   waitlist     WaitlistEntry[]
 
+  /// Cuenta propia del paciente (si se registró en el turnero) y cuentas de las que es familiar.
+  account       PatientAccount?
+  accountLinks  AccountPatient[]
+
   @@index([lastName, firstName])
+}
+
+/// Cuenta con la que el paciente entra al turnero online: usuario = DNI + contraseña. Para sacar turnos hay
+/// que haber ingresado. `patientId` es la ficha del titular; los familiares a cargo están en AccountPatient.
+model PatientAccount {
+  id           String   @id @default(cuid())
+  dni          String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  lastLoginAt  DateTime?
+
+  /// Mientras sea null la cuenta está "sin verificar": puede sacar turnos, con un tope de turnos futuros a la
+  /// vez. La secretaría la verifica mirando el DNI en persona.
+  verifiedAt   DateTime?
+  verifiedById String?
+  verifiedBy   User?     @relation("AccountVerifiedBy", fields: [verifiedById], references: [id], onDelete: SetNull)
+  /// Cuenta bloqueada por la secretaría: no puede ingresar.
+  blocked      Boolean   @default(false)
+
+  patientId String  @unique
+  patient   Patient @relation(fields: [patientId], references: [id], onDelete: Restrict)
+
+  dependents   AccountPatient[]
+  appointments Appointment[]
+}
+
+/// Personas a cargo de una cuenta (por ejemplo, los hijos): el titular puede sacarles turno.
+model AccountPatient {
+  accountId String
+  patientId String
+  /// CHILD | OTHER
+  relation  String   @default("CHILD")
+  createdAt DateTime @default(now())
+
+  account PatientAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  patient Patient        @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@id([accountId, patientId])
+  @@index([patientId])
 }
 
 /// Capa 4. Un turno cancelado libera el cupo; ausente, atendido, reservado y confirmado lo consumen.
@@ -350,12 +394,17 @@ model Appointment {
   cancelledById String?
   cancelledBy   User?   @relation("AppointmentCancelledBy", fields: [cancelledById], references: [id], onDelete: SetNull)
 
+  /// Cuenta del turnero con la que se sacó el turno (los turnos de la secretaría no tienen).
+  accountId     String?
+  account       PatientAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
   notifications NotificationLog[]
 
   @@index([professionalId, startsAt])
   @@index([coverageId, localDate])
   @@index([patientId])
   @@index([localDate])
+  @@index([accountId])
 }
 
 /// Pacientes esperando que se libere un turno.

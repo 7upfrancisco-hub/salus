@@ -2,11 +2,12 @@
 
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { checkAccountCapacity, patientInputFor } from "@/lib/accounts";
 import { bookAppointment } from "@/lib/booking";
 import type { VisitType } from "@/lib/constants";
 import { db } from "@/lib/db";
 import { ageInYears } from "@/lib/engine/periods";
-import { upsertPatient } from "@/lib/patients";
+import { accountPeople, getCurrentAccount } from "@/lib/patient-auth";
 import {
   listProfessionalsFor,
   listSpecialtiesFor,
@@ -17,13 +18,15 @@ import {
 } from "@/lib/public";
 import { allowRequest } from "@/lib/rate-limit";
 import { todayInZone } from "@/lib/time";
-import { birthDateSchema, fieldErrors, patientSchema } from "@/lib/validation";
+import { fieldErrors } from "@/lib/validation";
 
-// Estas funciones las llama el turnero público (sin sesión): todo se vuelve a validar acá.
+// Estas funciones las llama el turnero público. Hay que haber ingresado con una cuenta de paciente: todo se
+// vuelve a validar acá (ocultar la pantalla no alcanza) y el paciente sale siempre de la cuenta, nunca del formulario.
 
 const idSchema = z.string().min(1).max(40);
 
-// Obligatorio: si el casillero no está tildado el campo ni siquiera llega, y debe contar como error.
+const SESSION_EXPIRED = "Tu sesión venció. Ingresá de nuevo para continuar.";
+
 /** Valores que se devuelven al formulario cuando hay un error, para que React no los borre. */
 function echo(raw: Record<string, FormDataEntryValue>) {
   const values: Record<string, string> = {};
@@ -33,16 +36,22 @@ function echo(raw: Record<string, FormDataEntryValue>) {
   return values;
 }
 
-const consentSchema = z.literal("on", { error: "Tenés que aceptar el uso de tus datos para continuar" });
+/** La cuenta que ingresó y la persona (ella misma o un familiar) para la que se pide el turno. */
+async function accountAndPerson(patientId: string) {
+  const account = await getCurrentAccount();
+  if (!account) return null;
+  const person = accountPeople(account).find((p) => p.patientId === patientId);
+  return person ? { account, person } : null;
+}
 
 export async function getSpecialties(coverageId: string): Promise<SpecialtyOption[]> {
-  if (!idSchema.safeParse(coverageId).success || !(await allowRequest("browse", 120, 60_000))) return [];
+  if (!idSchema.safeParse(coverageId).success || !(await getCurrentAccount()) || !(await allowRequest("browse", 120, 60_000))) return [];
   return listSpecialtiesFor(coverageId);
 }
 
 export async function getProfessionals(coverageId: string, specialtyId: string): Promise<ProfessionalOption[]> {
   if (!idSchema.safeParse(coverageId).success || !idSchema.safeParse(specialtyId).success) return [];
-  if (!(await allowRequest("browse", 120, 60_000))) return [];
+  if (!(await getCurrentAccount()) || !(await allowRequest("browse", 120, 60_000))) return [];
   return listProfessionalsFor(coverageId, specialtyId);
 }
 
@@ -51,7 +60,7 @@ const availabilitySchema = z.object({
   specialtyId: idSchema,
   professionalId: idSchema.nullable(),
   visitType: z.enum(["FIRST", "CONTROL"]),
-  birthDate: birthDateSchema.nullable().optional(),
+  patientId: idSchema,
 });
 
 const EMPTY_AVAILABILITY: PublicAvailability = {
@@ -66,11 +75,15 @@ export async function getAvailability(params: {
   specialtyId: string;
   professionalId: string | null;
   visitType: VisitType;
-  birthDate?: string | null;
+  /** Persona para la que se busca turno: de ella sale la fecha de nacimiento que se usa para el límite de edad. */
+  patientId: string;
 }): Promise<PublicAvailability> {
   const parsed = availabilitySchema.safeParse(params);
   if (!parsed.success || !(await allowRequest("availability", 60, 60_000))) return EMPTY_AVAILABILITY;
-  return searchAvailability({ ...parsed.data, includeParticularAlternative: true });
+  const who = await accountAndPerson(parsed.data.patientId);
+  if (!who) return EMPTY_AVAILABILITY;
+  const { coverageId, specialtyId, professionalId, visitType } = parsed.data;
+  return searchAvailability({ coverageId, specialtyId, professionalId, visitType, birthDate: who.person.birthDate, includeParticularAlternative: true });
 }
 
 // ───────────────────────── Reservar ─────────────────────────
@@ -84,46 +97,42 @@ export type BookingState = {
 };
 
 const bookingSchema = z.object({
+  patientId: idSchema,
   coverageId: idSchema,
   professionalId: idSchema,
   date: z.iso.date(),
   startMinutes: z.coerce.number().int().min(0).max(1439),
   specialtyId: idSchema.optional(),
   notes: z.string().trim().max(300).optional(),
-  consent: consentSchema,
+  affiliateNumber: z.string().trim().max(40).optional(),
 });
 
 export async function submitBooking(_prev: BookingState, formData: FormData): Promise<BookingState> {
-  // Campo trampa: las personas no lo ven ni lo completan, los robots sí.
-  if (formData.get("website")) return { error: "No se pudo completar la reserva." };
   const raw = Object.fromEntries(formData);
   const values = echo(raw);
   if (!(await allowRequest("book", 8, 10 * 60_000))) {
     return { error: "Hiciste demasiados intentos seguidos. Esperá unos minutos o comunicate con el centro.", values };
   }
 
-  const patient = patientSchema.safeParse(raw);
   const booking = bookingSchema.safeParse(raw);
-  if (!patient.success || !booking.success) {
-    return {
-      error: "Revisá los datos ingresados.",
-      fieldErrors: {
-        ...(booking.success ? {} : fieldErrors(booking.error)),
-        ...(patient.success ? {} : fieldErrors(patient.error)),
-      },
-      values,
-    };
-  }
+  if (!booking.success) return { error: "Revisá los datos ingresados.", fieldErrors: fieldErrors(booking.error), values };
+
+  const who = await accountAndPerson(booking.data.patientId);
+  if (!who) return { error: SESSION_EXPIRED, values };
+
+  const capacity = await checkAccountCapacity(who.account);
+  if (!capacity.ok) return { error: capacity.message, values };
 
   const result = await bookAppointment({
     professionalId: booking.data.professionalId,
     coverageId: booking.data.coverageId,
     date: booking.data.date,
     startMinutes: booking.data.startMinutes,
-    patient: patient.data,
+    patient: patientInputFor(who.person, who.account, booking.data.affiliateNumber),
     notes: booking.data.notes || null,
     source: "PUBLIC",
     specialtyId: booking.data.specialtyId ?? null,
+    accountId: who.account.id,
   });
 
   if (!result.ok) {
@@ -142,32 +151,24 @@ export type WaitlistState = {
 };
 
 const waitlistSchema = z.object({
+  patientId: idSchema,
   coverageId: idSchema,
   specialtyId: idSchema,
   professionalId: idSchema.optional(),
-  consent: consentSchema,
 });
 
 export async function submitWaitlist(_prev: WaitlistState, formData: FormData): Promise<WaitlistState> {
-  if (formData.get("website")) return { error: "No se pudo completar el pedido." };
   const raw = Object.fromEntries(formData);
   const values = echo(raw);
   if (!(await allowRequest("waitlist", 5, 10 * 60_000))) {
     return { error: "Hiciste demasiados intentos seguidos. Esperá unos minutos o comunicate con el centro.", values };
   }
 
-  const patient = patientSchema.safeParse(raw);
   const entry = waitlistSchema.safeParse(raw);
-  if (!patient.success || !entry.success) {
-    return {
-      error: "Revisá los datos ingresados.",
-      fieldErrors: {
-        ...(entry.success ? {} : fieldErrors(entry.error)),
-        ...(patient.success ? {} : fieldErrors(patient.error)),
-      },
-      values,
-    };
-  }
+  if (!entry.success) return { error: "Revisá los datos ingresados.", fieldErrors: fieldErrors(entry.error), values };
+
+  const who = await accountAndPerson(entry.data.patientId);
+  if (!who) return { error: SESSION_EXPIRED, values };
 
   const specialty = await db.specialty.findUnique({ where: { id: entry.data.specialtyId } });
   const coverage = await db.coverage.findUnique({ where: { id: entry.data.coverageId } });
@@ -175,7 +176,7 @@ export async function submitWaitlist(_prev: WaitlistState, formData: FormData): 
 
   // La edad se calcula con la fecha de hoy del centro, no la de UTC (que de noche ya es "mañana").
   const settings = await db.centerSettings.findUnique({ where: { id: 1 } });
-  const age = ageInYears(patient.data.birthDate, todayInZone(settings?.timezone ?? "America/Argentina/Buenos_Aires"));
+  const age = ageInYears(who.person.birthDate, todayInZone(settings?.timezone ?? "America/Argentina/Buenos_Aires"));
   if ((specialty.minAgeYears !== null && age < specialty.minAgeYears) || (specialty.maxAgeYears !== null && age > specialty.maxAgeYears)) {
     return { error: `Esta especialidad atiende pacientes de ${specialty.minAgeYears ?? 0} a ${specialty.maxAgeYears ?? "…"} años.`, values };
   }
@@ -190,28 +191,20 @@ export async function submitWaitlist(_prev: WaitlistState, formData: FormData): 
     professionalId = professional.id;
   }
 
-  const outcome = await db.$transaction(async (tx) => {
-    const saved = await upsertPatient(tx, patient.data, { coverageId: coverage.id });
-    if (!saved.ok) return saved;
-
-    const already = await tx.waitlistEntry.findFirst({
-      where: {
-        patientId: saved.patient.id,
-        specialtyId: specialty.id,
-        coverageId: coverage.id,
-        professionalId,
-        status: { in: ["WAITING", "NOTIFIED"] },
-      },
-      select: { id: true },
-    });
-    if (!already) {
-      await tx.waitlistEntry.create({
-        data: { patientId: saved.patient.id, specialtyId: specialty.id, coverageId: coverage.id, professionalId },
-      });
-    }
-    return saved;
+  const already = await db.waitlistEntry.findFirst({
+    where: {
+      patientId: who.person.patientId,
+      specialtyId: specialty.id,
+      coverageId: coverage.id,
+      professionalId,
+      status: { in: ["WAITING", "NOTIFIED"] },
+    },
+    select: { id: true },
   });
-
-  if (!outcome.ok) return { error: outcome.message, values };
+  if (!already) {
+    await db.waitlistEntry.create({
+      data: { patientId: who.person.patientId, specialtyId: specialty.id, coverageId: coverage.id, professionalId },
+    });
+  }
   return { ok: true };
 }

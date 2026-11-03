@@ -4,6 +4,7 @@ import { useActionState, useRef, useState, type ReactNode } from "react";
 import { inputClass } from "@/components/ui";
 import { ageInYears } from "@/lib/engine/periods";
 import { capitalizeFirst } from "@/lib/time";
+import type { AccountPerson } from "@/lib/patient-auth";
 import type { ProfessionalOption, PublicAvailability, PublicSlot, SpecialtyOption } from "@/lib/public";
 import {
   getAvailability,
@@ -68,13 +69,16 @@ function FieldError({ message }: { message?: string }) {
   return message ? <p className="mt-1 text-xs text-red-600">{message}</p> : null;
 }
 
-export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
+export function BookingWizard({ coverages, people }: { coverages: Coverage[]; people: AccountPerson[] }) {
+  /** Para quién es el turno: el titular de la cuenta o una persona a cargo. */
+  const [personId, setPersonId] = useState(people[0].patientId);
+  const person = people.find((p) => p.patientId === personId) ?? people[0];
+  const birthDate = person.birthDate;
   /** El paciente ya pidió ver la agenda (botón "Buscar turno"). */
   const [searched, setSearched] = useState(false);
   const [coverageId, setCoverageId] = useState<string | null>(null);
   const [specialties, setSpecialties] = useState<SpecialtyOption[] | null>(null);
   const [specialtyId, setSpecialtyId] = useState<string | null>(null);
-  const [birthDate, setBirthDate] = useState("");
   const [professionals, setProfessionals] = useState<ProfessionalOption[] | null>(null);
   const [professionalId, setProfessionalId] = useState<string | null>(null); // ANY o un id
   const [visitType, setVisitType] = useState<VisitType>("FIRST");
@@ -94,11 +98,9 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
   const coverage = coverages.find((c) => c.id === coverageId) ?? null;
   const specialty = specialties?.find((s) => s.id === specialtyId) ?? null;
   const hasAgeLimit = !!specialty && (specialty.minAgeYears !== null || specialty.maxAgeYears !== null);
-  const birthDateValid = /^\d{4}-\d{2}-\d{2}$/.test(birthDate) && birthDate >= "1900-01-01" && birthDate <= new Date().toISOString().slice(0, 10);
-  const age = birthDateValid ? ageInYears(birthDate, new Date().toISOString().slice(0, 10)) : null;
-  const ageOutOfRange =
-    !!specialty && age !== null && ((specialty.minAgeYears !== null && age < specialty.minAgeYears) || (specialty.maxAgeYears !== null && age > specialty.maxAgeYears));
-  const readyForProfessional = !!specialty && (!hasAgeLimit || (birthDateValid && !ageOutOfRange));
+  const age = ageInYears(birthDate, new Date().toISOString().slice(0, 10));
+  const ageOutOfRange = !!specialty && ((specialty.minAgeYears !== null && age < specialty.minAgeYears) || (specialty.maxAgeYears !== null && age > specialty.maxAgeYears));
+  const readyForProfessional = !!specialty && !ageOutOfRange;
 
   function resetBelowCoverage() {
     setSpecialties(null);
@@ -106,7 +108,6 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
     resetBelowSpecialty();
   }
   function resetBelowSpecialty() {
-    setBirthDate("");
     setProfessionals(null);
     resetBelowProfessional();
   }
@@ -135,12 +136,24 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
     setLoading(false);
   }
 
+  /** Cambia la persona del turno: la edad cambia qué especialidades puede tomar, así que se empieza de nuevo. */
+  function choosePerson(id: string) {
+    setPersonId(id);
+    setCoverageId(null);
+    resetBelowCoverage();
+    setLoading(false);
+  }
+
   async function chooseSpecialty(id: string) {
     setSpecialtyId(id);
     resetBelowSpecialty();
     const target = specialties?.find((s) => s.id === id);
-    // Si la especialidad tiene límite de edad, primero se pide la fecha de nacimiento.
-    if (target && (target.minAgeYears !== null || target.maxAgeYears !== null)) return;
+    // Una especialidad con límite de edad que la persona no cumple no ofrece profesionales.
+    const outOfRange =
+      !!target &&
+      ((target.minAgeYears !== null && ageInYears(birthDate, new Date().toISOString().slice(0, 10)) < target.minAgeYears) ||
+        (target.maxAgeYears !== null && ageInYears(birthDate, new Date().toISOString().slice(0, 10)) > target.maxAgeYears));
+    if (outOfRange) return;
     await loadProfessionals(id);
   }
 
@@ -166,7 +179,7 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
       specialtyId,
       professionalId: target === ANY ? null : target,
       visitType: visit,
-      birthDate: hasAgeLimit && birthDateValid ? birthDate : null,
+      patientId: person.patientId,
     });
     if (mine !== requestId.current) return;
     setAvailability(result);
@@ -200,7 +213,6 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
   const firstSlot = days[0]?.slots[0];
   const requirements = choice ? (availability?.requirementsByProfessional[choice.slot.professionalId] ?? []) : [];
   const errors = bookingState.fieldErrors ?? {};
-  const waitErrors = waitState.fieldErrors ?? {};
 
   // Numeración de los pasos: cambia según si hay que pedir la fecha de nacimiento, la lista de espera, etc.
   let stepNumber = 0;
@@ -208,7 +220,20 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
 
   return (
     <div className="space-y-5">
-      <Step n={nextStep()} title="¿Con qué cobertura te atendés?">
+      {people.length > 1 && (
+        <Step n={nextStep()} title="¿Para quién es el turno?">
+          <div className="flex flex-wrap gap-2">
+            {people.map((p) => (
+              <Option key={p.patientId} selected={p.patientId === personId} onClick={() => choosePerson(p.patientId)}>
+                {p.name}
+                {p.relation === "SELF" && <span className="block text-xs text-zinc-500">Yo</span>}
+              </Option>
+            ))}
+          </div>
+        </Step>
+      )}
+
+      <Step n={nextStep()} title="¿Con qué cobertura se atiende?">
         {coverages.length === 0 ? (
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
             Por el momento no hay turnos online. Comunicate con el centro para consultar.
@@ -243,43 +268,14 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
           )}
 
           {specialty && hasAgeLimit && (
-            <div className="mt-4 max-w-xs">
-              <label htmlFor="birthDateGate" className="mb-1 block text-sm font-medium">
-                Fecha de nacimiento del paciente
-              </label>
-              <input
-                id="birthDateGate"
-                type="date"
-                value={birthDate}
-                max={new Date().toISOString().slice(0, 10)}
-                onChange={(e) => {
-                  setBirthDate(e.target.value);
-                  setProfessionals(null);
-                  resetBelowProfessional();
-                }}
-                onBlur={() => {
-                  if (readyForProfessional && professionals === null && specialtyId) void loadProfessionals(specialtyId);
-                }}
-                className={inputClass}
-              />
-              <p className="mt-1 text-xs text-zinc-500">
-                {specialty.name} atiende pacientes de {specialty.minAgeYears ?? 0} a {specialty.maxAgeYears ?? "…"} años.
-              </p>
-              {ageOutOfRange && (
-                <p role="alert" className="mt-1 text-sm text-red-600">
-                  Esta especialidad no atiende pacientes de {age} años.
-                </p>
-              )}
-              {readyForProfessional && professionals === null && !loading && (
-                <button
-                  type="button"
-                  onClick={() => specialtyId && loadProfessionals(specialtyId)}
-                  className="mt-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700"
-                >
-                  Continuar
-                </button>
-              )}
-            </div>
+            <p className="mt-3 text-xs text-zinc-500">
+              {specialty.name} atiende pacientes de {specialty.minAgeYears ?? 0} a {specialty.maxAgeYears ?? "…"} años.
+            </p>
+          )}
+          {ageOutOfRange && specialty && (
+            <p role="alert" className="mt-2 text-sm text-red-600">
+              {people.length > 1 ? `${person.name} tiene` : "Tenés"} {age} años: esta especialidad no atiende esa edad.
+            </p>
           )}
         </Step>
       )}
@@ -432,8 +428,10 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
               <input type="hidden" name="coverageId" value={coverage.id} />
               <input type="hidden" name="specialtyId" value={specialty.id} />
               {professionalId && professionalId !== ANY && <input type="hidden" name="professionalId" value={professionalId} />}
-              <PatientFields errors={waitErrors} showAffiliate={!coverage.isParticular} defaultBirthDate={birthDate} values={waitState.values} />
-              <Consent error={waitErrors.consent} checked={waitState.values?.consent === "on"} />
+              <input type="hidden" name="patientId" value={person.patientId} />
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                Anotamos a <strong>{person.name}</strong>. Si se libera un turno, el aviso llega al mail de la cuenta.
+              </p>
               {waitState.error && <p role="alert" className="text-sm text-red-600">{waitState.error}</p>}
               <button type="submit" disabled={joiningWaitlist} className="w-full rounded-lg bg-teal-600 px-4 py-3 font-medium text-white hover:bg-teal-700 disabled:opacity-60">
                 {joiningWaitlist ? "Anotando…" : "Anotarme en la lista de espera"}
@@ -444,11 +442,13 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
       )}
 
       {choice && coverage && (
-        <Step n={nextStep()} title="Tus datos">
+        <Step n={nextStep()} title="Confirmá tu turno">
           <p className="mb-4 rounded-lg bg-zinc-100 p-3 text-sm dark:bg-zinc-900">
             <strong>{longDay(choice.date)}</strong> a las <strong>{choice.slot.time} hs</strong>
             <br />
             {choice.slot.professionalName} · {specialty?.name} · {coverage.name}
+            <br />
+            Paciente: <strong>{person.name}</strong>
           </p>
 
           {requirements.length > 0 && (
@@ -468,12 +468,23 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
             <input type="hidden" name="professionalId" value={choice.slot.professionalId} />
             <input type="hidden" name="date" value={choice.date} />
             <input type="hidden" name="startMinutes" value={choice.slot.startMinutes} />
-            <PatientFields
-              errors={errors}
-              showAffiliate={!coverage.isParticular}
-              defaultBirthDate={birthDate}
-              values={bookingState.values}
-            />
+            <input type="hidden" name="patientId" value={person.patientId} />
+            {!coverage.isParticular && (
+              <div className="max-w-xs">
+                <label htmlFor="affiliateNumber" className="mb-1 block text-sm font-medium">
+                  Número de afiliado <span className="font-normal text-zinc-500">(opcional)</span>
+                </label>
+                <input
+                  id="affiliateNumber"
+                  name="affiliateNumber"
+                  autoComplete="off"
+                  maxLength={40}
+                  defaultValue={bookingState.values?.affiliateNumber ?? person.affiliateNumber ?? ""}
+                  className={inputClass}
+                />
+                <FieldError message={errors.affiliateNumber} />
+              </div>
+            )}
             <div>
               <label htmlFor="notes" className="mb-1 block text-sm font-medium">
                 Comentarios <span className="font-normal text-zinc-500">(opcional)</span>
@@ -481,7 +492,6 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
               <textarea id="notes" name="notes" rows={2} maxLength={300} defaultValue={bookingState.values?.notes} className={inputClass} />
               <p className="mt-1 text-xs text-zinc-500">No escribas datos médicos: el equipo los consulta en la atención.</p>
             </div>
-            <Consent error={errors.consent} checked={bookingState.values?.consent === "on"} />
             {bookingState.error && !bookingState.slotTaken && (
               <p role="alert" className="text-sm text-red-600">
                 {bookingState.error}
@@ -493,63 +503,6 @@ export function BookingWizard({ coverages }: { coverages: Coverage[] }) {
           </form>
         </Step>
       )}
-    </div>
-  );
-}
-
-function PatientFields({
-  errors,
-  showAffiliate,
-  defaultBirthDate,
-  values,
-}: {
-  errors: Record<string, string>;
-  showAffiliate: boolean;
-  defaultBirthDate: string;
-  /** Lo que la persona ya había escrito: React borra el formulario tras cada envío, así que se repone. */
-  values?: Record<string, string>;
-}) {
-  const field = (id: string, label: string, props: React.InputHTMLAttributes<HTMLInputElement> = {}) => (
-    <div>
-      <label htmlFor={id} className="mb-1 block text-sm font-medium">
-        {label}
-      </label>
-      <input id={id} name={id} required={props.required ?? true} className={inputClass} {...props} defaultValue={values?.[id] ?? props.defaultValue} />
-      <FieldError message={errors[id]} />
-    </div>
-  );
-
-  return (
-    <>
-      {/* Campo trampa anti-robots: debe quedar vacío. */}
-      <div aria-hidden="true" className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
-        <label htmlFor="website">No completar</label>
-        <input id="website" name="website" tabIndex={-1} autoComplete="off" />
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        {field("firstName", "Nombre", { autoComplete: "given-name" })}
-        {field("lastName", "Apellido", { autoComplete: "family-name" })}
-        {field("dni", "DNI del paciente", { inputMode: "numeric", placeholder: "Sin puntos", autoComplete: "off" })}
-        {field("birthDate", "Fecha de nacimiento", { type: "date", defaultValue: defaultBirthDate, max: new Date().toISOString().slice(0, 10), autoComplete: "bday" })}
-        {field("email", "Email", { type: "email", autoComplete: "email" })}
-        {field("phone", "Teléfono / WhatsApp", { type: "tel", autoComplete: "tel", placeholder: "11 2345 6789" })}
-        {showAffiliate && field("affiliateNumber", "Número de afiliado", { required: false, autoComplete: "off" })}
-      </div>
-    </>
-  );
-}
-
-function Consent({ error, checked }: { error?: string; checked?: boolean }) {
-  return (
-    <div>
-      <label className="flex items-start gap-2 text-sm">
-        <input type="checkbox" name="consent" defaultChecked={checked} className="mt-1 h-4 w-4 accent-teal-600" />
-        <span>
-          Acepto que el centro use mis datos personales para gestionar mi turno y enviarme avisos por mail. Los datos
-          se usan solo con ese fin.
-        </span>
-      </label>
-      <FieldError message={error} />
     </div>
   );
 }

@@ -1,7 +1,7 @@
 /**
  * Borra los datos de demostración de una base de Salus para dejarla lista para uso real.
  *
- * Qué borra: turnos, pacientes, lista de espera, avisos, horarios, reglas, profesionales, excepciones,
+ * Qué borra: turnos, pacientes (y sus cuentas del turnero), lista de espera, avisos, horarios, reglas, profesionales, excepciones,
  * auditoría, contadores del límite de pedidos y los usuarios de ejemplo (los que no son ADMIN y terminan
  * en @salus.local). Con --conservar-catalogos deja coberturas, especialidades y consultorios.
  * Qué NO borra: los administradores y la configuración del centro.
@@ -42,6 +42,7 @@ try {
   const counts = {
     "turnos": await db.appointment.count(),
     "pacientes": await db.patient.count(),
+    "cuentas de pacientes (turnero)": await db.patientAccount.count(),
     "lista de espera": await db.waitlistEntry.count(),
     "avisos (mails)": await db.notificationLog.count(),
     "profesionales": await db.professional.count(),
@@ -79,6 +80,7 @@ try {
       await tx.notificationLog.deleteMany();
       await tx.appointment.deleteMany();
       await tx.waitlistEntry.deleteMany();
+      await tx.patientAccount.deleteMany();
       await tx.patient.deleteMany();
       await tx.scheduleException.deleteMany();
       await tx.overbookAllowance.deleteMany();

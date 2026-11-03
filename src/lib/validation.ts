@@ -45,6 +45,27 @@ export const patientSchema = z.object({
 });
 export type PatientInput = z.infer<typeof patientSchema>;
 
+/** Contraseña de las cuentas de pacientes (bcrypt ignora lo que pasa de 72 bytes: se limita antes). */
+export const accountPasswordSchema = z
+  .string()
+  .min(8, "La contraseña debe tener al menos 8 caracteres")
+  .max(64, "La contraseña es demasiado larga (máximo 64 caracteres)");
+
+/** Datos para crear una cuenta: la persona titular y su contraseña. */
+export const registerSchema = patientSchema
+  .omit({ affiliateNumber: true })
+  .extend({
+    password: accountPasswordSchema,
+    passwordConfirm: z.string(),
+    consent: z.literal("on", { error: "Tenés que aceptar el uso de tus datos para continuar" }),
+  })
+  .refine((v) => v.password === v.passwordConfirm, { path: ["passwordConfirm"], message: "Las contraseñas no coinciden" });
+
+/** Una persona a cargo de la cuenta (un hijo, por ejemplo). */
+export const dependentSchema = patientSchema.pick({ dni: true, firstName: true, lastName: true, birthDate: true }).extend({
+  relation: z.enum(["CHILD", "OTHER"], "Elegí el parentesco"),
+});
+
 /** Convierte los errores de zod en un mapa campo → mensaje (el primer error de cada campo). */
 export function fieldErrors(error: z.ZodError) {
   const result: Record<string, string> = {};

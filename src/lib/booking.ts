@@ -48,6 +48,8 @@ export type BookInput = {
   override?: { reason: string } | null;
   /** Especialidad por la que se pide el turno (turnero online). Define el límite de edad si el profesional tiene varias. */
   specialtyId?: string | null;
+  /** Cuenta del turnero con la que se saca el turno (reservas online). */
+  accountId?: string | null;
 };
 
 class Abort extends Error {
@@ -192,6 +194,7 @@ export async function bookAppointment(input: BookInput): Promise<BookResult> {
           overrideReason,
           overrideRules: violations.length > 0 ? JSON.stringify(violations) : null,
           createdById: actor?.id ?? null,
+          accountId: input.accountId ?? null,
         },
       });
 

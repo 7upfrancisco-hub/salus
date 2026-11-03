@@ -61,6 +61,20 @@ El centro pasó la lista de profesionales (foto del cartel). El Dr. Ariel Gómez
 - Los profesionales se cargaron sin horarios ni reglas: no ofrecen turnos online hasta que se carguen desde Configuración (faltan días/horarios, duración, consultorio y coberturas con sus franjas).
 - Pruebas: 68 unitarias, `check:reservas` (con bloque de varias especialidades) y `check:ui` (79 verificaciones, 3 corridas seguidas) en verde contra un Postgres temporal.
 
+## Cuentas de pacientes: hay que ingresar para sacar turno (2026-11-03)
+
+Decisión del usuario: nadie saca turno online sin loguearse. **DNI + contraseña**; verificación «abierto + verificar en el mostrador»; una cuenta puede sacar turnos para familiares (Pediatría).
+
+- Modelo: `PatientAccount` (dni único, hash bcrypt, `verifiedAt/verifiedById`, `blocked`, ficha del titular en `patientId`), `AccountPatient` (personas a cargo) y `Appointment.accountId` (con qué cuenta se sacó). Migración `20261103000000_cuentas_de_pacientes` (solo agrega tablas).
+- Sesión aparte de la del personal: cookie `salus_patient`, JWT con `aud: "patient"` (`lib/patient-session.ts`, `lib/patient-auth.ts`); `getCurrentAccount` devuelve null si la cuenta está bloqueada.
+- Reglas en `lib/accounts.ts`: registro (DNI con ficha existente exige la misma fecha de nacimiento y **no pisa** su contacto: si no, alguien podría redirigir a su mail los avisos de otra persona), alta de familiares, tope de turnos futuros (2 sin verificar / 10 verificada) y datos del paciente para `bookAppointment`.
+- `app/actions.ts`: todas las acciones públicas exigen cuenta; `patientId` viene del formulario pero se valida contra las personas de la cuenta (`accountPeople`); `getAvailability` recibe `patientId` y la edad sale de la ficha, no del cliente.
+- Pantallas: `/ingresar`, `/registro`, `/cuenta` (turnos, familiares, cambiar contraseña), `/configuracion/cuentas` (secretaría y administración: verificar, bloquear, contraseña temporal). El asistente de reserva ya no pide datos personales: elige la persona (si hay familiares) y confirma.
+- «Mi cuenta» lista solo los turnos con `accountId` de esa cuenta (no todos los de la ficha), para que registrarse con el DNI de otro no exponga su historial.
+- Sin mail de recuperación (Resend no está configurado): la contraseña la restablece la secretaría. Pendiente cuando haya Resend: verificación del email y recuperación por código.
+- `scripts/limpiar-demo.mts` ahora también borra las cuentas de pacientes: **no volver a correrlo en producción** una vez que haya cuentas reales.
+- Pruebas: 68 unitarias, `check:reservas` y `check:ui` (con bloques de cuentas, familiares, verificación, bloqueo, tope y frenos de ingreso) en verde contra un Postgres temporal.
+
 ## Acceso del personal (2026-10-23)
 
 - El login acepta un **usuario simple** (letras, números, `.`, `-`, `_`, 3 a 40) **o un email**; se guarda en la columna `User.email`. No distingue mayúsculas. Validación en `loginNameSchema` (`validation.ts`); Configuración → Usuarios también lo acepta al crear.

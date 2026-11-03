@@ -82,6 +82,16 @@ export const NOTIFICATION_STATUS = {
   SKIPPED: "SKIPPED",
 } as const;
 
+/**
+ * Cuentas del turnero online. Una cuenta "sin verificar" (la secretaría todavía no vio el DNI en persona) puede
+ * tener menos turnos futuros a la vez, para limitar el daño si alguien se registra con el DNI de otra persona.
+ */
+export const ACCOUNT_MAX_ACTIVE = { UNVERIFIED: 2, VERIFIED: 10 } as const;
+/** Personas a cargo (hijos, etc.) que puede agregar una cuenta. */
+export const MAX_DEPENDENTS = 6;
+export const ACCOUNT_RELATION = { CHILD: "CHILD", OTHER: "OTHER" } as const;
+export const ACCOUNT_RELATION_LABEL: Record<string, string> = { CHILD: "Hijo/a", OTHER: "Otra persona a cargo" };
+
 /** Zona horaria del centro mientras no se configure otra (Configuración → Centro). */
 export const DEFAULT_TIMEZONE = "America/Argentina/Buenos_Aires";
 

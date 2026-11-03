@@ -53,9 +53,41 @@ async function login(page: Page, email: string, password: string) {
   await page.waitForURL("**/agenda**");
 }
 
-/** Entra al turnero. */
+/** Entra al turnero (con la sesión de paciente que ya tenga la página). */
 async function openPersonal(page: Page) {
   await page.goto(BASE);
+}
+
+const PASSWORD = "clave-paciente-1";
+const dniOf = (n: number) => `9100${String(n).padStart(4, "0")}`;
+
+/** Completa el formulario de registro (sin enviarlo). */
+async function fillRegister(page: Page, n: number, extra: { birthDate?: string; dni?: string; passwordConfirm?: string } = {}) {
+  await page.goto(`${BASE}/registro`);
+  await page.getByLabel("Nombre", { exact: true }).fill("Prueba");
+  await page.getByLabel("Apellido").fill(`Navegador${n}`);
+  await page.getByLabel("DNI", { exact: true }).fill(extra.dni ?? dniOf(n));
+  await page.getByLabel("Fecha de nacimiento").fill(extra.birthDate ?? "1958-04-12");
+  await page.getByLabel("Email").fill(`navegador${n}@example.com`);
+  await page.getByLabel(/Teléfono/).fill("11 2345 6789");
+  await page.getByLabel("Contraseña", { exact: true }).fill(PASSWORD);
+  await page.getByLabel("Repetí la contraseña").fill(extra.passwordConfirm ?? PASSWORD);
+}
+
+/** Crea una cuenta de paciente desde la pantalla de registro y espera a quedar adentro. */
+async function registerPatient(page: Page, n: number, extra: { birthDate?: string } = {}) {
+  await fillRegister(page, n, extra);
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Crear cuenta" }).click();
+  await page.waitForURL(`${BASE}/`);
+}
+
+/** Ingresa al turnero con DNI y contraseña. */
+async function loginPatient(page: Page, n: number, password = PASSWORD) {
+  await page.goto(`${BASE}/ingresar`);
+  await page.getByLabel("DNI", { exact: true }).fill(dniOf(n));
+  await page.getByLabel("Contraseña").fill(password);
+  await page.getByRole("button", { name: "Ingresar" }).click();
 }
 
 /** Descarga un PDF con un clic y devuelve su nombre y cuántas páginas tiene. */
@@ -79,14 +111,35 @@ let appointmentUrl = "";
 
 try {
   // ───────────────────────── Paciente ─────────────────────────
-  console.log("\nPaciente: reserva online");
+  console.log("\nPaciente: cuenta y reserva online");
   {
     const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage(); // celular
     page.setDefaultTimeout(30_000);
     await page.goto(BASE);
-    ok("la entrada pide la cobertura, sin preguntar el tipo de turno", (await page.getByText("¿Con qué cobertura te atendés?").count()) === 1 && (await page.getByText("¿Qué tipo de turno necesitás?").count()) === 0);
+    ok("sin ingresar la entrada pide ingresar y no muestra las coberturas", (await page.getByText("Para sacar un turno online ingresá").count()) === 1 && (await page.getByRole("button", { name: "PAMI" }).count()) === 0);
+    await page.getByRole("link", { name: "Creá tu cuenta" }).click();
+    await page.waitForURL("**/registro");
+
+    await fillRegister(page, 1, { passwordConfirm: "otra-clave-9" });
+    await page.getByRole("button", { name: "Crear cuenta" }).click();
+    await page.getByText("Las contraseñas no coinciden").waitFor();
+    ok("exige repetir bien la contraseña", (await db.patientAccount.count({ where: { dni: dniOf(1) } })) === 0);
+    ok("exige aceptar el uso de los datos", (await page.getByText("Tenés que aceptar").count()) > 0);
+    ok("si hay un error, no borra lo que la persona ya escribió", (await page.getByLabel("Apellido").inputValue()) === "Navegador1");
+
+    await page.getByLabel("Repetí la contraseña").fill(PASSWORD);
+    await page.getByLabel("Contraseña", { exact: true }).fill(PASSWORD);
+    await page.getByRole("checkbox").check();
+    await page.getByRole("button", { name: "Crear cuenta" }).click();
+    await page.waitForURL(`${BASE}/`);
+    const account = await db.patientAccount.findUniqueOrThrow({ where: { dni: dniOf(1) } });
+    ok("crea la cuenta y deja al paciente adentro, sin verificar", !account.verifiedAt && (await page.getByRole("link", { name: "Prueba" }).count()) > 0);
+
+    await page.getByText("¿Con qué cobertura se atiende?").waitFor();
+    ok("la entrada pide la cobertura, sin preguntar el tipo de turno", (await page.getByText("¿Qué tipo de turno necesitás?").count()) === 0);
     ok("la página pública muestra las coberturas", (await page.getByRole("button", { name: "PAMI" }).count()) > 0);
     ok("no hay camino preocupacional", (await page.getByText("Preocupacional").count()) === 0);
+    ok("con una sola persona no pregunta para quién es el turno", (await page.getByText("¿Para quién es el turno?").count()) === 0);
 
     await page.getByRole("button", { name: "PAMI" }).click();
     await page.getByRole("button", { name: "Traumatología" }).click();
@@ -109,44 +162,83 @@ try {
 
     await page.getByText("Para este turno tenés que traer:").waitFor();
     ok("muestra los requisitos de PAMI antes de confirmar", (await page.getByText("Orden PAMI vigente").count()) > 0);
+    ok("ya no pide los datos personales: salen de la cuenta", (await page.getByLabel("DNI").count()) === 0 && (await page.getByText("Paciente:").count()) > 0);
 
-    await fillPatient(page, 1);
-    await page.getByRole("button", { name: "Confirmar turno" }).click();
-    await page.getByText("Tenés que aceptar").waitFor();
-    ok("exige aceptar el uso de los datos (no reserva sin tildar)", page.url() === BASE + "/");
-    ok("si hay un error, no borra lo que la persona ya escribió", (await page.getByLabel("Apellido").inputValue()) === "Navegador1");
-
-    await page.getByRole("checkbox").check();
     await page.getByRole("button", { name: "Confirmar turno" }).click();
     await page.waitForURL("**/turno/**");
     appointmentUrl = page.url();
     ok(`reserva el turno (${slotText}) y lleva a la página del turno`, true);
     ok("queda como Reservado", (await page.getByText("Reservado", { exact: true }).count()) > 0);
     ok("la página del turno repite los requisitos", (await page.getByText("Acordate de traer:").count()) > 0);
+    ok("el turno queda asociado a la cuenta", (await db.appointment.count({ where: { accountId: account.id } })) === 1);
 
     await page.getByRole("button", { name: "Confirmo que voy a asistir" }).click();
     await page.getByText("Confirmado", { exact: true }).waitFor();
     ok("el paciente puede confirmar su asistencia", true);
+
+    await page.goto(`${BASE}/cuenta`);
+    await page.getByRole("heading", { name: "Mis próximos turnos" }).waitFor();
+    ok("«Mi cuenta» lista el turno", (await page.getByText(/Dr\. Pérez/).count()) > 0);
+    await page.getByRole("button", { name: "Salir" }).click();
+    await page.getByText("Para sacar un turno online ingresá").waitFor();
+    ok("al salir vuelve a pedir ingresar", (await page.getByRole("button", { name: "PAMI" }).count()) === 0);
+    await page.goto(`${BASE}/cuenta`);
+    await page.waitForURL("**/ingresar");
+    ok("sin sesión «Mi cuenta» manda a ingresar", true);
+
+    await loginPatient(page, 1, "clave-equivocada");
+    await page.getByText("DNI o contraseña incorrectos.").waitFor();
+    ok("con una contraseña equivocada no deja entrar", true);
+    await page.getByLabel("Contraseña").fill(PASSWORD);
+    await page.getByRole("button", { name: "Ingresar" }).click();
+    await page.waitForURL(`${BASE}/`);
+    ok("con la contraseña correcta vuelve a entrar", (await page.getByText("¿Con qué cobertura se atiende?").count()) === 1);
     await page.context().close();
   }
 
-  console.log("\nPaciente: pediatría y rango de edad");
+  console.log("\nPaciente: familiares, pediatría y rango de edad");
   {
     const page = await (await browser.newContext()).newPage();
     page.setDefaultTimeout(30_000);
+    await loginPatient(page, 1);
+    await page.waitForURL(`${BASE}/`);
+
+    await page.goto(`${BASE}/cuenta`);
+    const familyForm = page.locator("form", { has: page.getByRole("button", { name: "Agregar persona" }) });
+    await familyForm.getByLabel("Nombre").fill("Hijo");
+    await familyForm.getByLabel("Apellido").fill("Navegador1");
+    await familyForm.getByLabel("DNI").fill("91000010");
+    await familyForm.getByLabel("Fecha de nacimiento").fill("2018-05-20");
+    await familyForm.getByRole("button", { name: "Agregar persona" }).click();
+    await page.getByText("Listo, ya podés sacarle turnos").waitFor();
+    ok("agrega a un hijo a la cuenta", (await db.accountPatient.count({ where: { account: { dni: dniOf(1) } } })) === 1);
+
+    await familyForm.getByLabel("Nombre").fill("Otro");
+    await familyForm.getByLabel("Apellido").fill("Menor");
+    await familyForm.getByLabel("DNI").fill("91000010");
+    await familyForm.getByLabel("Fecha de nacimiento").fill("2010-01-01");
+    await familyForm.getByRole("button", { name: "Agregar persona" }).click();
+    await page.getByText(/no coinciden con los registrados/).first().waitFor();
+    ok("no deja agregar a alguien con un DNI ya registrado y otra fecha de nacimiento", (await db.accountPatient.count({ where: { account: { dni: dniOf(1) } } })) === 1);
+
     await openPersonal(page);
+    await page.getByText("¿Para quién es el turno?").waitFor();
+    ok("con familiares pregunta para quién es el turno", (await page.getByRole("button", { name: /Hijo Navegador1/ }).count()) === 1);
+
+    // La titular (nacida en 1958) no entra en pediatría.
     await page.getByRole("button", { name: "OSDE" }).click();
     await page.getByRole("button", { name: "Pediatría" }).click();
-    ok("pide la fecha de nacimiento si la especialidad tiene límite de edad", (await page.getByLabel("Fecha de nacimiento del paciente").count()) === 1);
-    await page.getByLabel("Fecha de nacimiento del paciente").fill("1990-01-01");
-    await page.getByLabel("Fecha de nacimiento del paciente").blur();
-    await page.getByText(/no atiende pacientes de \d+ años/).waitFor();
+    await page.getByText(/no atiende esa edad/).waitFor();
     ok("avisa que un adulto no entra en pediatría", (await page.getByRole("button", { name: /Primero disponible/ }).count()) === 0);
-    await page.getByLabel("Fecha de nacimiento del paciente").fill("2018-05-20");
-    await page.getByLabel("Fecha de nacimiento del paciente").blur();
+
+    // Con su hijo sí.
+    await page.getByRole("button", { name: /Hijo Navegador1/ }).click();
+    await page.getByRole("button", { name: "OSDE" }).click();
+    await page.getByRole("button", { name: "Pediatría" }).click();
     await page.getByRole("button", { name: /Primero disponible/ }).waitFor();
-    ok("con la edad correcta ofrece profesionales", true);
-    await openPersonal(page);
+    ok("para el hijo ofrece profesionales de pediatría", true);
+
+    await page.getByRole("button", { name: /Prueba Navegador1/ }).click();
     await page.getByRole("button", { name: "OSDE" }).click();
     await page.getByRole("button", { name: "Traumatología" }).click();
     await page.getByRole("button", { name: /Dr\. Pérez/ }).click();
@@ -313,10 +405,14 @@ try {
     const e2eRule = await db.coverageRule.findFirstOrThrow({ where: { professionalId: perez.id, coverageId: coverage.id } });
     ok("la regla queda guardada en la base", !!e2eRule);
 
-    await openPersonal(page);
-    await page.getByRole("button", { name: "Obra Social E2E" }).click();
-    await page.getByRole("button", { name: "Traumatología" }).waitFor();
+    const patientPage = await (await browser.newContext()).newPage();
+    patientPage.setDefaultTimeout(30_000);
+    await loginPatient(patientPage, 1);
+    await patientPage.waitForURL(`${BASE}/`);
+    await patientPage.getByRole("button", { name: "Obra Social E2E" }).click();
+    await patientPage.getByRole("button", { name: "Traumatología" }).waitFor();
     ok("la nueva cobertura aparece enseguida en el turnero del paciente", true);
+    await patientPage.context().close();
 
     await page.goto(`${BASE}/configuracion/reglas/${e2eRule.id}`);
     page.once("dialog", (dialog) => void dialog.accept());
@@ -433,6 +529,71 @@ try {
     await page.context().close();
   }
 
+  console.log("\nSecretaría: cuentas de pacientes");
+  {
+    const page = await (await browser.newContext({ viewport: { width: 1280, height: 1000 } })).newPage();
+    page.setDefaultTimeout(30_000);
+    await login(page, "secretaria@salus.local", "secretaria1234");
+    await page.goto(`${BASE}/configuracion/cuentas`);
+    const row = page.locator("li", { hasText: `DNI ${dniOf(1)}` });
+    await row.waitFor();
+    ok("lista la cuenta recién creada, sin verificar", (await row.getByText("Sin verificar").count()) === 1);
+
+    await row.getByRole("button", { name: "Verificar (vi el DNI)" }).click();
+    await row.getByText("Guardado ✓").waitFor();
+    const verified = await db.patientAccount.findUniqueOrThrow({ where: { dni: dniOf(1) } });
+    ok("la secretaría verifica la cuenta y queda quién lo hizo", !!verified.verifiedAt && !!verified.verifiedById);
+    ok("la verificación queda en el registro de actividad", (await db.auditLog.count({ where: { action: "ACCOUNT_VERIFIED", entityId: verified.id } })) === 1);
+
+    page.once("dialog", (dialog) => void dialog.accept());
+    await row.getByRole("button", { name: "Contraseña temporal" }).click();
+    const notice = await row.locator("span[role=status]").innerText();
+    const temp = /Contraseña temporal: (\S+)/.exec(notice)?.[1] ?? "";
+    ok("genera una contraseña temporal", temp.length >= 8, notice);
+
+    const patient = await (await browser.newContext()).newPage();
+    patient.setDefaultTimeout(30_000);
+    await loginPatient(patient, 1, PASSWORD);
+    await patient.getByText("DNI o contraseña incorrectos.").waitFor();
+    ok("la contraseña anterior deja de servir", true);
+    await patient.getByLabel("Contraseña").fill(temp);
+    await patient.getByRole("button", { name: "Ingresar" }).click();
+    await patient.waitForURL(`${BASE}/`);
+    ok("el paciente entra con la temporal", true);
+
+    await patient.goto(`${BASE}/cuenta`);
+    const passwordForm = patient.locator("form", { has: patient.getByRole("button", { name: "Cambiar contraseña" }) });
+    await passwordForm.getByLabel("Contraseña actual").fill(temp);
+    await passwordForm.getByLabel("Contraseña nueva").fill(PASSWORD);
+    await passwordForm.getByLabel("Repetí la nueva").fill(PASSWORD);
+    await passwordForm.getByRole("button", { name: "Cambiar contraseña" }).click();
+    await patient.getByText("Contraseña actualizada ✓").waitFor();
+    ok("el paciente cambia su contraseña desde «Mi cuenta»", true);
+
+    page.once("dialog", (dialog) => void dialog.accept());
+    await row.getByRole("button", { name: "Bloquear" }).click();
+    await row.getByText("Bloqueada").waitFor();
+    ok("la secretaría bloquea la cuenta", (await db.patientAccount.findUniqueOrThrow({ where: { dni: dniOf(1) } })).blocked);
+    await patient.goto(`${BASE}/`);
+    await patient.getByText("Para sacar un turno online ingresá").waitFor();
+    ok("una cuenta bloqueada pierde la sesión que tenía", true);
+    await loginPatient(patient, 1);
+    await patient.getByText(/cuenta está bloqueada/).waitFor();
+    ok("y no puede volver a ingresar", true);
+
+    await row.getByRole("button", { name: "Desbloquear" }).click();
+    await row.getByText("Bloqueada").waitFor({ state: "detached" });
+    await patient.goto(`${BASE}/`);
+    await patient.getByText("¿Con qué cobertura se atiende?").waitFor();
+    ok("al desbloquearla vuelve a tener acceso", true);
+    await patient.context().close();
+
+    await page.goto(`${BASE}/configuracion/cuentas?q=Navegador1&estado=sin-verificar`);
+    await page.getByText("No hay cuentas que coincidan.").waitFor();
+    ok("el filtro «sin verificar» no muestra las ya verificadas", true);
+    await page.context().close();
+  }
+
   // ───────────────────────── Sin turnos: alternativa particular y lista de espera ─────────────────────────
   console.log("\nPaciente: sin turnos con su cobertura");
   {
@@ -451,7 +612,15 @@ try {
 
     const page = await (await browser.newContext({ viewport: { width: 390, height: 900 } })).newPage();
     page.setDefaultTimeout(30_000);
-    await openPersonal(page);
+
+    // Un DNI que ya tiene ficha (el paciente de relleno) no se puede reclamar con otra fecha de nacimiento.
+    await fillRegister(page, 8, { dni: "91009001", birthDate: "1990-01-01" });
+    await page.getByRole("checkbox").check();
+    await page.getByRole("button", { name: "Crear cuenta" }).click();
+    await page.getByText(/no coinciden con los registrados/).first().waitFor();
+    ok("no deja crear una cuenta con el DNI de otra persona (fecha de nacimiento distinta)", (await db.patientAccount.count({ where: { dni: "91009001" } })) === 0);
+
+    await registerPatient(page, 5);
     await page.getByRole("button", { name: "PAMI" }).click();
     await page.getByRole("button", { name: "Traumatología" }).click();
     await page.getByRole("button", { name: /Dr\. Pérez/ }).click();
@@ -471,8 +640,6 @@ try {
     await page.getByRole("button", { name: /Dr\. Pérez/ }).click();
     await page.getByRole("button", { name: "Buscar turno" }).click();
     await page.getByText("Anotarme en la lista de espera").click();
-    await fillPatient(page, 5);
-    await page.getByRole("checkbox").check();
     await page.getByRole("button", { name: "Anotarme en la lista de espera" }).last().click();
     await page.getByText(/Te anotamos/).waitFor();
     ok("se anota en la lista de espera", (await db.waitlistEntry.count({ where: { patient: { dni: "91000005" }, status: "WAITING" } })) === 1);
@@ -488,6 +655,37 @@ try {
     await staff.getByText(/Navegador5/).waitFor({ state: "detached" });
     ok("y puede sacarlo de la lista", true);
     await staff.context().close();
+  }
+
+  console.log("\nPaciente: tope de turnos de una cuenta sin verificar");
+  {
+    const page = await (await browser.newContext({ viewport: { width: 390, height: 900 } })).newPage();
+    page.setDefaultTimeout(30_000);
+    await registerPatient(page, 6);
+    const account = await db.patientAccount.findUniqueOrThrow({ where: { dni: dniOf(6) }, include: { patient: true } });
+    const cover = await db.coverage.findFirstOrThrow({ where: { name: "Particular" } });
+    // Dos turnos pendientes lejanos (fuera de la grilla, solo para ocupar el tope).
+    for (const n of [1, 2]) {
+      const date = addDaysToDate(today, 40 + n);
+      await db.appointment.create({
+        data: { professionalId: ruiz.id, patientId: account.patientId, coverageId: cover.id, accountId: account.id, localDate: date, startsAt: zonedTimeToUtc(date, 3 * 60, settings.timezone), endsAt: zonedTimeToUtc(date, 3 * 60 + 20, settings.timezone), status: "RESERVED" },
+      });
+    }
+    await page.goto(`${BASE}/cuenta`);
+    ok("«Mi cuenta» explica el tope mientras no esté verificada", (await page.getByText(/podés tener 2 turnos pendientes a la vez/).count()) === 1);
+
+    await openPersonal(page);
+    await page.getByRole("button", { name: "Particular" }).click();
+    await page.getByRole("button", { name: "Traumatología" }).click();
+    await page.getByRole("button", { name: /Dr\. Pérez/ }).click();
+    await page.getByRole("button", { name: "Buscar turno" }).click();
+    await page.getByText("Próximo turno disponible").waitFor();
+    await page.getByRole("button", { name: dayLabel(monday), exact: true }).click();
+    await page.locator("div.grid button[aria-pressed]").filter({ hasText: /\d{2}:\d{2} hs/ }).first().click();
+    await page.getByRole("button", { name: "Confirmar turno" }).click();
+    await page.getByText(/Ya tenés 2 turnos pendientes/).waitFor();
+    ok("una cuenta sin verificar con 2 turnos pendientes no puede sacar un tercero", (await db.appointment.count({ where: { accountId: account.id } })) === 2);
+    await page.context().close();
   }
 
   console.log("\nSeguridad: intentos de login");
@@ -513,6 +711,23 @@ try {
     const registered = await db.auditLog.count({ where: { action: "LOGIN_FAILED", details: { contains: "nadie@example.com" }, createdAt: { gte: startedAt } } });
     ok("después de 6 fallos seguidos se frena el intento (aunque sea otra contraseña)", blocked, `fallos registrados en la base: ${registered}`);
     await page.context().close();
+
+    // Lo mismo para el ingreso de pacientes (con un DNI que no existe, para no bloquear cuentas de prueba).
+    const patientPage = await (await browser.newContext({ extraHTTPHeaders: { "x-forwarded-for": `203.0.114.${1 + Math.floor(Math.random() * 250)}` } })).newPage();
+    patientPage.setDefaultTimeout(30_000);
+    await patientPage.goto(`${BASE}/ingresar`);
+    await patientPage.getByLabel("DNI", { exact: true }).fill("91009999");
+    const patientAttempt = async (password: string) => {
+      await patientPage.getByLabel("Contraseña").fill(password);
+      await patientPage.getByRole("button", { name: "Ingresar" }).click();
+      await patientPage.getByRole("button", { name: "Ingresando…" }).waitFor({ state: "detached" });
+      await patientPage.locator("form p[role=alert]").waitFor();
+    };
+    for (let i = 1; i <= 6; i += 1) await patientAttempt(`incorrecta-${i}`);
+    ok("el ingreso de pacientes avisa «DNI o contraseña incorrectos» sin revelar si el DNI existe", (await patientPage.getByText("DNI o contraseña incorrectos.").count()) === 1);
+    await patientAttempt("incorrecta-7");
+    ok("y después de 6 fallos también se frena", await patientPage.getByText(/Demasiados intentos fallidos/).waitFor({ timeout: 10_000 }).then(() => true, () => false));
+    await patientPage.context().close();
   }
 } finally {
   await browser.close();
@@ -526,8 +741,9 @@ try {
   await db.professional.deleteMany({ where: { name: { startsWith: "Dr. E2E " } } });
   await db.user.deleteMany({ where: { email: "e2e.secretaria" } });
   await db.appointment.deleteMany({ where: { patientId: { in: ids } } });
+  await db.patientAccount.deleteMany({ where: { dni: { startsWith: "9100" } } });
   await db.patient.deleteMany({ where: { id: { in: ids } } });
-  await db.auditLog.deleteMany({ where: { createdAt: { gte: startedAt }, OR: [{ entity: { in: ["Appointment", "Patient", "WaitlistEntry", "ScheduleException", "CoverageRule", "Coverage", "Professional", "Agenda"] } }, { action: { in: ["USER_CREATED", "LOGIN", "LOGIN_FAILED"] } }] } });
+  await db.auditLog.deleteMany({ where: { createdAt: { gte: startedAt }, OR: [{ entity: { in: ["Appointment", "Patient", "PatientAccount", "WaitlistEntry", "ScheduleException", "CoverageRule", "Coverage", "Professional", "Agenda"] } }, { action: { in: ["USER_CREATED", "LOGIN", "LOGIN_FAILED"] } }] } });
   await db.$disconnect();
 }
 
