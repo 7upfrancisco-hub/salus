@@ -308,12 +308,12 @@ model Patient {
   @@index([lastName, firstName])
 }
 
-/// Cuenta con la que el paciente entra al turnero online: usuario = DNI + contraseña. Para sacar turnos hay
-/// que haber ingresado. `patientId` es la ficha del titular; los familiares a cargo están en AccountPatient.
+/// Cuenta con la que el paciente entra al turnero online: se ingresa solo con el DNI (no hay contraseña, a
+/// pedido del centro). Para sacar turnos hay que haber ingresado. `patientId` es la ficha del titular; los
+/// familiares a cargo están en AccountPatient.
 model PatientAccount {
   id           String   @id @default(cuid())
   dni          String   @unique
-  passwordHash String
   createdAt    DateTime @default(now())
   lastLoginAt  DateTime?
 

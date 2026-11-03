@@ -1,14 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState, useEffect, useRef, type InputHTMLAttributes } from "react";
 import { inputClass } from "@/components/ui";
-import {
-  addFamilyMember,
-  changePassword,
-  loginAccount,
-  registerAccount,
-  type AccountFormState,
-} from "./actions";
+import { addFamilyMember, loginAccount, registerAccount, type AccountFormState } from "./actions";
 
 const initial: AccountFormState = {};
 const buttonClass = "w-full rounded-lg bg-teal-600 px-4 py-2.5 font-medium text-white transition hover:bg-teal-700 disabled:opacity-60";
@@ -58,9 +53,15 @@ export function LoginForm() {
   const [state, action, pending] = useActionState(loginAccount, initial);
   return (
     <form action={action} className="space-y-4">
-      <Input id="dni" label="DNI" state={state} inputMode="numeric" autoComplete="username" placeholder="Sin puntos" />
-      <Input id="password" label="Contraseña" state={state} type="password" autoComplete="current-password" />
+      <Input id="dni" label="DNI" state={state} inputMode="numeric" autoComplete="off" placeholder="Sin puntos" />
       <FormError state={state} />
+      {state.noAccount && (
+        <p className="text-sm">
+          <Link href={`/registro?dni=${encodeURIComponent(state.values?.dni ?? "")}`} className="font-medium text-teal-700 hover:underline dark:text-teal-400">
+            Crear mi cuenta con este DNI
+          </Link>
+        </p>
+      )}
       <button type="submit" disabled={pending} className={buttonClass}>
         {pending ? "Ingresando…" : "Ingresar"}
       </button>
@@ -68,7 +69,7 @@ export function LoginForm() {
   );
 }
 
-export function RegisterForm() {
+export function RegisterForm({ defaultDni }: { defaultDni?: string }) {
   const [state, action, pending] = useActionState(registerAccount, initial);
   return (
     <form action={action} className="space-y-4">
@@ -76,12 +77,10 @@ export function RegisterForm() {
       <div className="grid gap-4 sm:grid-cols-2">
         <Input id="firstName" label="Nombre" state={state} autoComplete="given-name" />
         <Input id="lastName" label="Apellido" state={state} autoComplete="family-name" />
-        <Input id="dni" label="DNI" state={state} inputMode="numeric" placeholder="Sin puntos" autoComplete="off" hint="Con este número vas a ingresar." />
+        <Input id="dni" label="DNI" state={state} inputMode="numeric" placeholder="Sin puntos" autoComplete="off" defaultValue={state.values?.dni ?? defaultDni} hint="Con este número vas a ingresar." />
         <Input id="birthDate" label="Fecha de nacimiento" state={state} type="date" max={today()} autoComplete="bday" />
         <Input id="email" label="Email" state={state} type="email" autoComplete="email" />
         <Input id="phone" label="Teléfono / WhatsApp" state={state} type="tel" autoComplete="tel" placeholder="11 2345 6789" />
-        <Input id="password" label="Contraseña" state={state} type="password" autoComplete="new-password" minLength={8} maxLength={64} hint="Mínimo 8 caracteres." />
-        <Input id="passwordConfirm" label="Repetí la contraseña" state={state} type="password" autoComplete="new-password" minLength={8} maxLength={64} />
       </div>
       <div>
         <label className="flex items-start gap-2 text-sm">
@@ -130,29 +129,6 @@ export function FamilyForm() {
       {state.ok && <p role="status" className="text-sm text-green-700">Listo, ya podés sacarle turnos ✓</p>}
       <button type="submit" disabled={pending} className={buttonClass}>
         {pending ? "Agregando…" : "Agregar persona"}
-      </button>
-    </form>
-  );
-}
-
-export function PasswordForm() {
-  const [state, action, pending] = useActionState(changePassword, initial);
-  const formRef = useRef<HTMLFormElement>(null);
-  useEffect(() => {
-    if (state.ok) formRef.current?.reset();
-  }, [state]);
-
-  return (
-    <form ref={formRef} action={action} className="space-y-4">
-      <Input id="current" label="Contraseña actual" state={state} type="password" autoComplete="current-password" />
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Input id="password" label="Contraseña nueva" state={state} type="password" autoComplete="new-password" minLength={8} maxLength={64} />
-        <Input id="passwordConfirm" label="Repetí la nueva" state={state} type="password" autoComplete="new-password" minLength={8} maxLength={64} />
-      </div>
-      <FormError state={state} />
-      {state.ok && <p role="status" className="text-sm text-green-700">Contraseña actualizada ✓</p>}
-      <button type="submit" disabled={pending} className={buttonClass}>
-        {pending ? "Guardando…" : "Cambiar contraseña"}
       </button>
     </form>
   );

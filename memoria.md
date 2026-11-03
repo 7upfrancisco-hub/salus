@@ -63,15 +63,17 @@ El centro pasó la lista de profesionales (foto del cartel). El Dr. Ariel Gómez
 
 ## Cuentas de pacientes: hay que ingresar para sacar turno (2026-11-03)
 
-Decisión del usuario: nadie saca turno online sin loguearse. **DNI + contraseña**; verificación «abierto + verificar en el mostrador»; una cuenta puede sacar turnos para familiares (Pediatría).
+Decisión del usuario: nadie saca turno online sin loguearse. Primero se hizo con DNI + contraseña; **ese mismo día pidió ingreso solo con DNI** («la gente va a llevar el DNI al turno»), así que se quitó la contraseña (migración `20261103120000_cuentas_sin_contrasena`, borra `PatientAccount.passwordHash`; el commit anterior ya estaba pusheado). Verificación «abierto + verificar en el mostrador»; una cuenta puede sacar turnos para familiares (Pediatría).
 
-- Modelo: `PatientAccount` (dni único, hash bcrypt, `verifiedAt/verifiedById`, `blocked`, ficha del titular en `patientId`), `AccountPatient` (personas a cargo) y `Appointment.accountId` (con qué cuenta se sacó). Migración `20261103000000_cuentas_de_pacientes` (solo agrega tablas).
+**Riesgo asumido (avisado al usuario):** el DNI no es secreto, así que quien lo conozca entra como esa persona (ve sus turnos y saca turnos hasta el tope). Defensas: verificación en mostrador, tope 2/10, bloqueo, y freno a quien prueba DNI sin cuenta (10 por IP en 15 min). Endurecer más = pedir también la fecha de nacimiento al ingresar. Ya no hay contraseña temporal ni «cambiar contraseña».
+
+- Modelo: `PatientAccount` (dni único, `verifiedAt/verifiedById`, `blocked`, ficha del titular en `patientId`), `AccountPatient` (personas a cargo) y `Appointment.accountId` (con qué cuenta se sacó). Migración `20261103000000_cuentas_de_pacientes` (solo agrega tablas).
 - Sesión aparte de la del personal: cookie `salus_patient`, JWT con `aud: "patient"` (`lib/patient-session.ts`, `lib/patient-auth.ts`); `getCurrentAccount` devuelve null si la cuenta está bloqueada.
 - Reglas en `lib/accounts.ts`: registro (DNI con ficha existente exige la misma fecha de nacimiento y **no pisa** su contacto: si no, alguien podría redirigir a su mail los avisos de otra persona), alta de familiares, tope de turnos futuros (2 sin verificar / 10 verificada) y datos del paciente para `bookAppointment`.
 - `app/actions.ts`: todas las acciones públicas exigen cuenta; `patientId` viene del formulario pero se valida contra las personas de la cuenta (`accountPeople`); `getAvailability` recibe `patientId` y la edad sale de la ficha, no del cliente.
-- Pantallas: `/ingresar`, `/registro`, `/cuenta` (turnos, familiares, cambiar contraseña), `/configuracion/cuentas` (secretaría y administración: verificar, bloquear, contraseña temporal). El asistente de reserva ya no pide datos personales: elige la persona (si hay familiares) y confirma.
+- Pantallas: `/ingresar`, `/registro`, `/cuenta` (turnos y familiares), `/configuracion/cuentas` (secretaría y administración: verificar y bloquear). El asistente de reserva ya no pide datos personales: elige la persona (si hay familiares) y confirma.
 - «Mi cuenta» lista solo los turnos con `accountId` de esa cuenta (no todos los de la ficha), para que registrarse con el DNI de otro no exponga su historial.
-- Sin mail de recuperación (Resend no está configurado): la contraseña la restablece la secretaría. Pendiente cuando haya Resend: verificación del email y recuperación por código.
+- Pendiente cuando haya Resend: verificar el email y, si se quiere cerrar el ingreso, un código por mail en lugar de solo el DNI.
 - `scripts/limpiar-demo.mts` ahora también borra las cuentas de pacientes: **no volver a correrlo en producción** una vez que haya cuentas reales.
 - Pruebas: 68 unitarias, `check:reservas` y `check:ui` (con bloques de cuentas, familiares, verificación, bloqueo, tope y frenos de ingreso) en verde contra un Postgres temporal.
 

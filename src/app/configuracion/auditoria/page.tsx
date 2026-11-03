@@ -28,6 +28,12 @@ const ACTION_LABEL: Record<string, string> = {
   USER_UPDATED: "Usuario modificado",
   USER_UPDATED_PASSWORD_RESET: "Contraseña restablecida",
   SETTINGS_UPDATED: "Datos del centro modificados",
+  ACCOUNT_REGISTERED: "Cuenta de paciente creada",
+  ACCOUNT_DEPENDENT_ADDED: "Persona a cargo agregada",
+  ACCOUNT_VERIFIED: "Cuenta de paciente verificada",
+  ACCOUNT_UNVERIFIED: "Verificación de cuenta quitada",
+  ACCOUNT_BLOCKED: "Cuenta de paciente bloqueada",
+  ACCOUNT_UNBLOCKED: "Cuenta de paciente desbloqueada",
 };
 
 const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);

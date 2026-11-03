@@ -1,31 +1,27 @@
 "use server";
 
-import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { addDependent, createAccount } from "@/lib/accounts";
-import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { getCurrentAccount } from "@/lib/patient-auth";
 import { createPatientSession, destroyPatientSession } from "@/lib/patient-session";
 import { allowRequest, isBlocked, recordFailure } from "@/lib/rate-limit";
-import { accountPasswordSchema, dependentSchema, dniSchema, fieldErrors, registerSchema } from "@/lib/validation";
+import { dependentSchema, dniSchema, fieldErrors, registerSchema } from "@/lib/validation";
 
 // Estas funciones las llama el público: todo se vuelve a validar acá.
 
+// Se ingresa solo con el DNI (no hay contraseña). Como el DNI no es secreto, lo que se frena es probar DNI
+// que no tienen cuenta: eso es lo que haría alguien que busca cuentas ajenas.
 const LOGIN_WINDOW_MS = 15 * 60_000;
-const LOGIN_MAX_FAILURES = 6;
-const LOGIN_MAX_FAILURES_PER_IP = 30;
+const LOGIN_MAX_MISSES_PER_IP = 10;
 
-// Hash de relleno para que el tiempo de respuesta no revele si el DNI tiene cuenta.
-const DUMMY_HASH = bcrypt.hashSync("salus-dummy-password", 12);
-
-/** Valores devueltos al formulario cuando hay un error, para que React no los borre (nunca las contraseñas). */
+/** Valores devueltos al formulario cuando hay un error, para que React no los borre. */
 function echo(raw: Record<string, FormDataEntryValue>) {
   const values: Record<string, string> = {};
   for (const [key, value] of Object.entries(raw)) {
-    if (typeof value === "string" && key !== "website" && !/password/i.test(key)) values[key] = value;
+    if (typeof value === "string" && key !== "website") values[key] = value;
   }
   return values;
 }
@@ -33,31 +29,30 @@ function echo(raw: Record<string, FormDataEntryValue>) {
 export type AccountFormState = {
   ok?: boolean;
   error?: string;
+  /** El DNI no tiene cuenta: el formulario ofrece crearla. */
+  noAccount?: boolean;
   fieldErrors?: Record<string, string>;
   values?: Record<string, string>;
 };
 
 // ───────────────────────── Ingreso ─────────────────────────
 
-const loginSchema = z.object({ dni: dniSchema, password: z.string().min(1).max(200) });
+const loginSchema = z.object({ dni: dniSchema });
 
 export async function loginAccount(_prev: AccountFormState, formData: FormData): Promise<AccountFormState> {
   const raw = Object.fromEntries(formData);
   const values = echo(raw);
   const parsed = loginSchema.safeParse(raw);
-  if (!parsed.success) return { error: "Ingresá tu DNI (solo números) y tu contraseña.", values };
+  if (!parsed.success) return { error: "Ingresá tu DNI (solo números, sin puntos).", values };
 
-  const bucket = `plogin:${parsed.data.dni}`;
-  if ((await isBlocked(bucket, LOGIN_MAX_FAILURES, LOGIN_WINDOW_MS)) || (await isBlocked("plogin", LOGIN_MAX_FAILURES_PER_IP, LOGIN_WINDOW_MS))) {
-    return { error: "Demasiados intentos fallidos. Esperá unos minutos y volvé a probar.", values };
+  if (await isBlocked("plogin", LOGIN_MAX_MISSES_PER_IP, LOGIN_WINDOW_MS)) {
+    return { error: "Demasiados intentos. Esperá unos minutos y volvé a probar, o comunicate con el centro.", values };
   }
 
   const account = await db.patientAccount.findUnique({ where: { dni: parsed.data.dni } });
-  const ok = await bcrypt.compare(parsed.data.password, account?.passwordHash ?? DUMMY_HASH);
-  if (!account || !ok) {
-    await recordFailure(bucket);
+  if (!account) {
     await recordFailure("plogin");
-    return { error: "DNI o contraseña incorrectos.", values };
+    return { error: "No encontramos una cuenta con ese DNI.", noAccount: true, values: { ...values, dni: parsed.data.dni } };
   }
   if (account.blocked) {
     return { error: "Tu cuenta está bloqueada. Comunicate con el centro.", values };
@@ -85,15 +80,10 @@ export async function registerAccount(_prev: AccountFormState, formData: FormDat
   }
 
   const parsed = registerSchema.safeParse(raw);
-  if (!parsed.success) {
-    const errors = fieldErrors(parsed.error);
-    // La comparación de contraseñas no corre si otro campo falló: se avisa igual para no mostrar los errores de a uno.
-    if (raw.password !== raw.passwordConfirm && !errors.passwordConfirm) errors.passwordConfirm = "Las contraseñas no coinciden";
-    return { error: "Revisá los datos ingresados.", fieldErrors: errors, values };
-  }
+  if (!parsed.success) return { error: "Revisá los datos ingresados.", fieldErrors: fieldErrors(parsed.error), values };
 
-  const { dni, firstName, lastName, birthDate, email, phone, password } = parsed.data;
-  const result = await createAccount({ dni, firstName, lastName, birthDate, email, phone, password });
+  const { dni, firstName, lastName, birthDate, email, phone } = parsed.data;
+  const result = await createAccount({ dni, firstName, lastName, birthDate, email, phone });
   if (!result.ok) {
     return { error: result.message, fieldErrors: result.field ? { [result.field]: result.message } : undefined, values };
   }
@@ -118,27 +108,5 @@ export async function addFamilyMember(_prev: AccountFormState, formData: FormDat
   if (!result.ok) return { error: result.message, fieldErrors: result.field ? { [result.field]: result.message } : undefined, values };
   revalidatePath("/cuenta");
   revalidatePath("/");
-  return { ok: true };
-}
-
-const passwordChangeSchema = z
-  .object({ current: z.string().min(1, "Ingresá tu contraseña actual"), password: accountPasswordSchema, passwordConfirm: z.string() })
-  .refine((v) => v.password === v.passwordConfirm, { path: ["passwordConfirm"], message: "Las contraseñas no coinciden" });
-
-export async function changePassword(_prev: AccountFormState, formData: FormData): Promise<AccountFormState> {
-  const account = await getCurrentAccount();
-  if (!account) return { error: "Tu sesión venció. Ingresá de nuevo." };
-  const parsed = passwordChangeSchema.safeParse(Object.fromEntries(formData));
-  if (!parsed.success) return { error: "Revisá los datos ingresados.", fieldErrors: fieldErrors(parsed.error) };
-
-  const bucket = `pchange:${account.id}`;
-  if (await isBlocked(bucket, 5, LOGIN_WINDOW_MS)) return { error: "Demasiados intentos fallidos. Esperá unos minutos y volvé a probar." };
-  if (!(await bcrypt.compare(parsed.data.current, account.passwordHash))) {
-    await recordFailure(bucket);
-    return { error: "La contraseña actual no es correcta.", fieldErrors: { current: "La contraseña actual no es correcta." } };
-  }
-
-  await db.patientAccount.update({ where: { id: account.id }, data: { passwordHash: await bcrypt.hash(parsed.data.password, 12) } });
-  await audit({ action: "ACCOUNT_PASSWORD_CHANGED", entity: "PatientAccount", entityId: account.id });
   return { ok: true };
 }

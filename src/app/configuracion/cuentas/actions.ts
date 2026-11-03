@@ -1,7 +1,5 @@
 "use server";
 
-import { randomInt } from "node:crypto";
-import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { audit } from "@/lib/audit";
@@ -12,10 +10,6 @@ import { failed, saved, type FormState } from "@/lib/form-state";
 // Cuentas de pacientes del turnero: las gestiona la secretaría (y la administración).
 
 const idSchema = z.string().min(1).max(40);
-
-/** Sin caracteres que se confunden al dictarlos (0/O, 1/l/I). */
-const TEMP_PASSWORD_ALPHABET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-const tempPassword = () => Array.from({ length: 10 }, () => TEMP_PASSWORD_ALPHABET[randomInt(TEMP_PASSWORD_ALPHABET.length)]).join("");
 
 function refresh() {
   revalidatePath("/configuracion/cuentas");
@@ -58,23 +52,4 @@ export async function setBlocked(_prev: FormState, formData: FormData): Promise<
   });
   refresh();
   return saved();
-}
-
-/** Contraseña temporal para un paciente que no la recuerda: se muestra una sola vez y el paciente la cambia desde «Mi cuenta». */
-export async function resetAccountPassword(_prev: FormState, formData: FormData): Promise<FormState> {
-  const user = await requireConfigUser();
-  const id = idSchema.safeParse(formData.get("id"));
-  if (!id.success) return failed("La cuenta no existe.");
-
-  const account = await db.patientAccount.findUnique({ where: { id: id.data }, select: { id: true } });
-  if (!account) return failed("La cuenta no existe.");
-
-  const password = tempPassword();
-  const passwordHash = await bcrypt.hash(password, 12);
-  await db.$transaction(async (tx) => {
-    await tx.patientAccount.update({ where: { id: account.id }, data: { passwordHash } });
-    await audit({ userId: user.id, action: "ACCOUNT_PASSWORD_RESET", entity: "PatientAccount", entityId: account.id }, tx);
-  });
-  refresh();
-  return saved(`Contraseña temporal: ${password} — pasásela al paciente (se muestra una sola vez; la cambia desde «Mi cuenta»).`);
 }

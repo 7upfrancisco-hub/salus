@@ -5,7 +5,7 @@ import { StaffShell } from "@/components/staff-shell";
 import { inputBase, primaryButtonClass } from "@/components/ui";
 import { requireConfigUser } from "@/lib/config-access";
 import { db } from "@/lib/db";
-import { resetAccountPassword, setBlocked, setVerified } from "./actions";
+import { setBlocked, setVerified } from "./actions";
 
 export const metadata: Metadata = { title: "Cuentas de pacientes" };
 
@@ -41,9 +41,9 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
       <Link href="/configuracion" className="text-sm text-zinc-500 hover:text-foreground">← Configuración</Link>
       <h1 className="mb-1 mt-2 text-2xl font-bold tracking-tight">Cuentas de pacientes</h1>
       <p className="mb-6 text-sm text-zinc-500">
-        Los pacientes se registran solos en el turnero con su DNI. Cuando vienen al centro, mirá su DNI y marcá la cuenta como
-        verificada: pasa de poder tener 2 turnos pendientes a 10. Podés bloquear una cuenta sospechosa o darle una contraseña
-        temporal a quien no recuerda la suya.
+        Los pacientes se registran solos en el turnero y después ingresan solo con su DNI. Como el DNI no es secreto, cuando vienen
+        al centro mirá su documento y marcá la cuenta como verificada: pasa de poder tener 2 turnos pendientes a 10. Podés
+        bloquear una cuenta sospechosa (por ejemplo, si alguien saca turnos con el DNI de otra persona).
       </p>
 
       <form className="mb-4 flex flex-wrap items-end gap-3" action="/configuracion/cuentas">
@@ -99,9 +99,6 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
                 >
                   <input type="hidden" name="id" value={a.id} />
                   <input type="hidden" name="blocked" value={a.blocked ? "0" : "1"} />
-                </ActionForm>
-                <ActionForm action={resetAccountPassword} submitLabel="Contraseña temporal" confirmMessage="¿Generar una contraseña temporal? La anterior deja de servir." className="space-y-2">
-                  <input type="hidden" name="id" value={a.id} />
                 </ActionForm>
               </div>
             </li>

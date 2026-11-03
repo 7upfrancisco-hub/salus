@@ -1,5 +1,4 @@
 import "server-only";
-import bcrypt from "bcryptjs";
 import { ACCOUNT_MAX_ACTIVE, APPOINTMENT_STATUS, MAX_DEPENDENTS } from "@/lib/constants";
 import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
@@ -25,13 +24,11 @@ export async function createAccount(data: {
   birthDate: string;
   email: string;
   phone: string;
-  password: string;
 }): Promise<AccountResult> {
-  const passwordHash = await bcrypt.hash(data.password, 12);
   try {
     return await db.$transaction(async (tx) => {
       if (await tx.patientAccount.findUnique({ where: { dni: data.dni }, select: { id: true } })) {
-        return { ok: false as const, field: "dni", message: "Ya hay una cuenta con ese DNI. Ingresá con tu contraseña; si no la recordás, pedí que te la restablezcan en el centro." };
+        return { ok: false as const, field: "dni", message: "Ya hay una cuenta con ese DNI: ingresá con tu DNI." };
       }
 
       let patient = await tx.patient.findUnique({ where: { dni: data.dni } });
@@ -47,14 +44,14 @@ export async function createAccount(data: {
         patient = await tx.patient.update({ where: { id: patient.id }, data: { email: data.email } });
       }
 
-      const account = await tx.patientAccount.create({ data: { dni: data.dni, passwordHash, patientId: patient.id } });
+      const account = await tx.patientAccount.create({ data: { dni: data.dni, patientId: patient.id } });
       await audit({ action: "ACCOUNT_REGISTERED", entity: "PatientAccount", entityId: account.id, details: { dni: data.dni, existingPatient } }, tx);
       return { ok: true as const, accountId: account.id };
     });
   } catch (error) {
     // Dos registros simultáneos con el mismo DNI: gana uno y el otro choca con el índice único.
     if (error instanceof Error && /unique constraint/i.test(error.message)) {
-      return { ok: false, field: "dni", message: "Ya hay una cuenta con ese DNI. Ingresá con tu contraseña." };
+      return { ok: false, field: "dni", message: "Ya hay una cuenta con ese DNI: ingresá con tu DNI." };
     }
     throw error;
   }

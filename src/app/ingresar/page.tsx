@@ -17,7 +17,7 @@ export default async function PatientLoginPage() {
       <PublicHeader />
       <main className="mx-auto w-full max-w-sm flex-1 px-4 py-10">
         <h1 className="mb-1 text-2xl font-bold tracking-tight">Ingresá para sacar tu turno</h1>
-        <p className="mb-6 text-sm text-zinc-500">Con tu DNI y tu contraseña.</p>
+        <p className="mb-6 text-sm text-zinc-500">Con tu DNI.</p>
         <div className={cardClass}>
           <LoginForm />
         </div>
@@ -26,9 +26,6 @@ export default async function PatientLoginPage() {
           <Link href="/registro" className="font-medium text-teal-700 hover:underline dark:text-teal-400">
             Creá tu cuenta
           </Link>
-        </p>
-        <p className="mt-2 text-center text-xs text-zinc-500">
-          ¿Olvidaste tu contraseña? Comunicate con el centro y te la restablecemos.
         </p>
       </main>
       <PublicFooter />

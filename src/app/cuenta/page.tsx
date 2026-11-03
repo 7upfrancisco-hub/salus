@@ -8,7 +8,7 @@ import { formatWhen } from "@/lib/email-templates";
 import { requireAccount } from "@/lib/patient-auth";
 import { specialtyNames } from "@/lib/specialties";
 import { APPOINTMENT_STATUS_LABEL } from "@/lib/status-labels";
-import { FamilyForm, PasswordForm } from "./forms";
+import { FamilyForm } from "./forms";
 
 export const metadata: Metadata = { title: "Mi cuenta", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -115,11 +115,6 @@ export default async function AccountPage() {
           ) : (
             <p className="text-sm text-zinc-500">Llegaste al máximo de personas a cargo.</p>
           )}
-        </section>
-
-        <section className={cardClass}>
-          <h2 className="mb-3 text-lg font-semibold">Cambiar contraseña</h2>
-          <PasswordForm />
         </section>
       </main>
       <PublicFooter />

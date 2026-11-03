@@ -25,7 +25,7 @@ export default async function Home() {
           </>
         ) : (
           <>
-            <p className="mb-6 text-sm text-zinc-500">Para sacar un turno online ingresá con tu DNI y tu contraseña.</p>
+            <p className="mb-6 text-sm text-zinc-500">Para sacar un turno online ingresá con tu DNI.</p>
             <div className={`${cardClass} space-y-4`}>
               <Link href="/ingresar" className="block w-full rounded-lg bg-teal-600 px-4 py-3 text-center font-medium text-white transition hover:bg-teal-700">
                 Ingresar

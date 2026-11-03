@@ -10,7 +10,7 @@ const AGENDA_ITEMS = [
   { href: "/configuracion/horarios", title: "Horarios de atención", text: "Días y horas en que atiende cada profesional, consultorio y duración de los turnos." },
   { href: "/configuracion/reglas", title: "Reglas por cobertura", text: "Qué coberturas atiende cada profesional: franjas horarias, cupos y requisitos para el paciente." },
   { href: "/configuracion/excepciones", title: "Feriados, licencias y bloqueos", text: "Días sin atención y sobreturnos habilitados." },
-  { href: "/configuracion/cuentas", title: "Cuentas de pacientes", text: "Verificar el DNI de quienes se registran en el turnero, bloquear cuentas y restablecer contraseñas." },
+  { href: "/configuracion/cuentas", title: "Cuentas de pacientes", text: "Verificar el DNI de quienes se registran en el turnero, bloquear cuentas sospechosas." },
 ];
 
 const ADMIN_ITEMS = [

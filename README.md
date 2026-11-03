@@ -53,13 +53,13 @@ Antes de cargar datos reales, se borra todo con `scripts/limpiar-demo.mts` (borr
 
 El turnero es solo para atención en la clínica (no hay turnos preocupacionales): cobertura (obra social o particular) → especialidad → médico → **Buscar turno** → día y horario → confirmar.
 
-**Para sacar un turno online hay que tener una cuenta** (`/registro`, una sola vez) e ingresar con DNI y contraseña (`/ingresar`). Las pantallas y las acciones del servidor lo exigen: ocultar el turnero no alcanza.
+**Para sacar un turno online hay que tener una cuenta** (`/registro`, una sola vez) e ingresar **solo con el DNI** (`/ingresar`; no hay contraseña, a pedido del centro: los pacientes llevan el DNI al turno). Las pantallas y las acciones del servidor lo exigen: ocultar el turnero no alcanza.
 
 - **Quién es el paciente** sale siempre de la cuenta, nunca del formulario: el titular o una persona a cargo (hijos, hasta 6, desde `/cuenta`). La fecha de nacimiento para el límite de edad también sale de la ficha.
-- **Verificación**: la cuenta nace sin verificar y puede tener 2 turnos pendientes a la vez; cuando el paciente muestra el DNI en el centro, la secretaría la verifica (Configuración → Cuentas de pacientes) y pasa a 10. Ahí mismo se bloquean cuentas y se da una contraseña temporal a quien no recuerda la suya (no hay recuperación por mail mientras Resend no esté configurado).
+- **Verificación**: la cuenta nace sin verificar y puede tener 2 turnos pendientes a la vez; cuando el paciente muestra el DNI en el centro, la secretaría la verifica (Configuración → Cuentas de pacientes) y pasa a 10. Ahí mismo se bloquean cuentas. **Como el DNI no es secreto**, quien conozca el DNI de otra persona puede ingresar como ella (ver sus turnos y sacarle turnos, hasta el tope): la verificación en el mostrador, el tope y el bloqueo son la defensa. Si se quiere cerrar más, el paso siguiente es pedir también la fecha de nacimiento.
 - Si el DNI ya tiene ficha en el centro, la fecha de nacimiento tiene que coincidir; registrarse **no pisa** el contacto de una ficha existente.
 - «Mi cuenta» muestra solo los turnos sacados con esa cuenta. El link del mail (`/turno/<código>`) sigue sirviendo para ver, confirmar o cancelar.
-- Frenos: 6 ingresos fallidos por DNI o 30 por IP bloquean 15 minutos; 5 registros por hora y por IP.
+- Frenos: 10 ingresos seguidos con DNI sin cuenta, desde la misma IP, bloquean 15 minutos (lo que haría quien busca cuentas ajenas); 5 registros por hora y por IP.
 
 ## Descargar la agenda del día
 

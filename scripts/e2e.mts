@@ -58,11 +58,10 @@ async function openPersonal(page: Page) {
   await page.goto(BASE);
 }
 
-const PASSWORD = "clave-paciente-1";
 const dniOf = (n: number) => `9100${String(n).padStart(4, "0")}`;
 
 /** Completa el formulario de registro (sin enviarlo). */
-async function fillRegister(page: Page, n: number, extra: { birthDate?: string; dni?: string; passwordConfirm?: string } = {}) {
+async function fillRegister(page: Page, n: number, extra: { birthDate?: string; dni?: string } = {}) {
   await page.goto(`${BASE}/registro`);
   await page.getByLabel("Nombre", { exact: true }).fill("Prueba");
   await page.getByLabel("Apellido").fill(`Navegador${n}`);
@@ -70,8 +69,6 @@ async function fillRegister(page: Page, n: number, extra: { birthDate?: string; 
   await page.getByLabel("Fecha de nacimiento").fill(extra.birthDate ?? "1958-04-12");
   await page.getByLabel("Email").fill(`navegador${n}@example.com`);
   await page.getByLabel(/Teléfono/).fill("11 2345 6789");
-  await page.getByLabel("Contraseña", { exact: true }).fill(PASSWORD);
-  await page.getByLabel("Repetí la contraseña").fill(extra.passwordConfirm ?? PASSWORD);
 }
 
 /** Crea una cuenta de paciente desde la pantalla de registro y espera a quedar adentro. */
@@ -82,11 +79,10 @@ async function registerPatient(page: Page, n: number, extra: { birthDate?: strin
   await page.waitForURL(`${BASE}/`);
 }
 
-/** Ingresa al turnero con DNI y contraseña. */
-async function loginPatient(page: Page, n: number, password = PASSWORD) {
+/** Ingresa al turnero solo con el DNI. */
+async function loginPatient(page: Page, n: number) {
   await page.goto(`${BASE}/ingresar`);
   await page.getByLabel("DNI", { exact: true }).fill(dniOf(n));
-  await page.getByLabel("Contraseña").fill(password);
   await page.getByRole("button", { name: "Ingresar" }).click();
 }
 
@@ -120,15 +116,13 @@ try {
     await page.getByRole("link", { name: "Creá tu cuenta" }).click();
     await page.waitForURL("**/registro");
 
-    await fillRegister(page, 1, { passwordConfirm: "otra-clave-9" });
+    await fillRegister(page, 1);
+    ok("el registro ya no pide contraseña", (await page.getByLabel(/contraseña/i).count()) === 0);
     await page.getByRole("button", { name: "Crear cuenta" }).click();
-    await page.getByText("Las contraseñas no coinciden").waitFor();
-    ok("exige repetir bien la contraseña", (await db.patientAccount.count({ where: { dni: dniOf(1) } })) === 0);
-    ok("exige aceptar el uso de los datos", (await page.getByText("Tenés que aceptar").count()) > 0);
+    await page.getByText("Tenés que aceptar").waitFor();
+    ok("exige aceptar el uso de los datos", (await db.patientAccount.count({ where: { dni: dniOf(1) } })) === 0);
     ok("si hay un error, no borra lo que la persona ya escribió", (await page.getByLabel("Apellido").inputValue()) === "Navegador1");
 
-    await page.getByLabel("Repetí la contraseña").fill(PASSWORD);
-    await page.getByLabel("Contraseña", { exact: true }).fill(PASSWORD);
     await page.getByRole("checkbox").check();
     await page.getByRole("button", { name: "Crear cuenta" }).click();
     await page.waitForURL(`${BASE}/`);
@@ -186,13 +180,18 @@ try {
     await page.waitForURL("**/ingresar");
     ok("sin sesión «Mi cuenta» manda a ingresar", true);
 
-    await loginPatient(page, 1, "clave-equivocada");
-    await page.getByText("DNI o contraseña incorrectos.").waitFor();
-    ok("con una contraseña equivocada no deja entrar", true);
-    await page.getByLabel("Contraseña").fill(PASSWORD);
+    await page.goto(`${BASE}/ingresar`);
+    await page.getByLabel("DNI", { exact: true }).fill("91009998");
     await page.getByRole("button", { name: "Ingresar" }).click();
+    await page.getByText("No encontramos una cuenta con ese DNI.").waitFor();
+    ok("un DNI sin cuenta no entra y ofrece crearla", (await page.getByRole("link", { name: "Crear mi cuenta con este DNI" }).count()) === 1);
+    await page.getByRole("link", { name: "Crear mi cuenta con este DNI" }).click();
+    await page.waitForURL("**/registro?dni=91009998");
+    ok("y la pantalla de registro ya trae el DNI escrito", (await page.getByLabel("DNI", { exact: true }).inputValue()) === "91009998");
+
+    await loginPatient(page, 1);
     await page.waitForURL(`${BASE}/`);
-    ok("con la contraseña correcta vuelve a entrar", (await page.getByText("¿Con qué cobertura se atiende?").count()) === 1);
+    ok("con su DNI vuelve a entrar", (await page.getByText("¿Con qué cobertura se atiende?").count()) === 1);
     await page.context().close();
   }
 
@@ -545,30 +544,13 @@ try {
     ok("la secretaría verifica la cuenta y queda quién lo hizo", !!verified.verifiedAt && !!verified.verifiedById);
     ok("la verificación queda en el registro de actividad", (await db.auditLog.count({ where: { action: "ACCOUNT_VERIFIED", entityId: verified.id } })) === 1);
 
-    page.once("dialog", (dialog) => void dialog.accept());
-    await row.getByRole("button", { name: "Contraseña temporal" }).click();
-    const notice = await row.locator("span[role=status]").innerText();
-    const temp = /Contraseña temporal: (\S+)/.exec(notice)?.[1] ?? "";
-    ok("genera una contraseña temporal", temp.length >= 8, notice);
-
     const patient = await (await browser.newContext()).newPage();
     patient.setDefaultTimeout(30_000);
-    await loginPatient(patient, 1, PASSWORD);
-    await patient.getByText("DNI o contraseña incorrectos.").waitFor();
-    ok("la contraseña anterior deja de servir", true);
-    await patient.getByLabel("Contraseña").fill(temp);
-    await patient.getByRole("button", { name: "Ingresar" }).click();
+    await loginPatient(patient, 1);
     await patient.waitForURL(`${BASE}/`);
-    ok("el paciente entra con la temporal", true);
-
+    ok("el paciente entra solo con su DNI", true);
     await patient.goto(`${BASE}/cuenta`);
-    const passwordForm = patient.locator("form", { has: patient.getByRole("button", { name: "Cambiar contraseña" }) });
-    await passwordForm.getByLabel("Contraseña actual").fill(temp);
-    await passwordForm.getByLabel("Contraseña nueva").fill(PASSWORD);
-    await passwordForm.getByLabel("Repetí la nueva").fill(PASSWORD);
-    await passwordForm.getByRole("button", { name: "Cambiar contraseña" }).click();
-    await patient.getByText("Contraseña actualizada ✓").waitFor();
-    ok("el paciente cambia su contraseña desde «Mi cuenta»", true);
+    ok("«Mi cuenta» ya no tiene contraseña que cambiar", (await patient.getByText(/contraseña/i).count()) === 0);
 
     page.once("dialog", (dialog) => void dialog.accept());
     await row.getByRole("button", { name: "Bloquear" }).click();
@@ -712,21 +694,20 @@ try {
     ok("después de 6 fallos seguidos se frena el intento (aunque sea otra contraseña)", blocked, `fallos registrados en la base: ${registered}`);
     await page.context().close();
 
-    // Lo mismo para el ingreso de pacientes (con un DNI que no existe, para no bloquear cuentas de prueba).
+    // Ingreso de pacientes: solo se cuentan los DNI sin cuenta (lo que haría quien busca cuentas ajenas).
     const patientPage = await (await browser.newContext({ extraHTTPHeaders: { "x-forwarded-for": `203.0.114.${1 + Math.floor(Math.random() * 250)}` } })).newPage();
     patientPage.setDefaultTimeout(30_000);
     await patientPage.goto(`${BASE}/ingresar`);
-    await patientPage.getByLabel("DNI", { exact: true }).fill("91009999");
-    const patientAttempt = async (password: string) => {
-      await patientPage.getByLabel("Contraseña").fill(password);
+    const patientAttempt = async (dni: string) => {
+      await patientPage.getByLabel("DNI", { exact: true }).fill(dni);
       await patientPage.getByRole("button", { name: "Ingresar" }).click();
       await patientPage.getByRole("button", { name: "Ingresando…" }).waitFor({ state: "detached" });
       await patientPage.locator("form p[role=alert]").waitFor();
     };
-    for (let i = 1; i <= 6; i += 1) await patientAttempt(`incorrecta-${i}`);
-    ok("el ingreso de pacientes avisa «DNI o contraseña incorrectos» sin revelar si el DNI existe", (await patientPage.getByText("DNI o contraseña incorrectos.").count()) === 1);
-    await patientAttempt("incorrecta-7");
-    ok("y después de 6 fallos también se frena", await patientPage.getByText(/Demasiados intentos fallidos/).waitFor({ timeout: 10_000 }).then(() => true, () => false));
+    for (let i = 1; i <= 10; i += 1) await patientAttempt(`9100999${i % 10}`);
+    ok("probar DNI sin cuenta solo avisa que no hay cuenta", (await patientPage.getByText("No encontramos una cuenta con ese DNI.").count()) === 1);
+    await patientAttempt("91009991");
+    ok("después de 10 DNI sin cuenta seguidos se frena el ingreso", await patientPage.getByText(/Demasiados intentos/).waitFor({ timeout: 10_000 }).then(() => true, () => false));
     await patientPage.context().close();
   }
 } finally {
